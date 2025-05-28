@@ -1,0 +1,3 @@
+([('PomodoroBlocker',
+   '/Users/andreasrydder/Downloads/prog/pomodoro/pom_block/pomodoro-website-blocker/dist/PomodoroBlocker',
+   'EXECUTABLE')],)
