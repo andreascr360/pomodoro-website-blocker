@@ -64,14 +64,6 @@ class PomodoroWebsiteBlocker:
         self.start_focus_button = ttk.Button(self.root, text="Start Focus (25 min)", command=self._start_focus_session)
         self.start_focus_button.grid(row=7, column=0, padx=5, pady=10)
 
-        self.start_break_button = ttk.Button(
-            self.root,
-            text="Start Break (5 min)",
-            command=self._start_manual_break_session
-        )
-        self.start_break_button.grid(row=8, column=0, padx=5, pady=5)
-
-
         self.pomodoros_completed_label = ttk.Label(self.root, text=f"Pomodoros Completed: {self.pomodoro_count}")
         self.pomodoros_completed_label.grid(row=7, column=1, padx=5, pady=10, sticky="w")
 
