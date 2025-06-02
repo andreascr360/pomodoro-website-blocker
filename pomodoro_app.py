@@ -5,53 +5,99 @@ import sys
 from pathlib import Path
 import json
 import math
+import threading
+import datetime
+try:
+    from playsound import playsound
+    PLAYSOUND_AVAILABLE = True
+except ImportError:
+    PLAYSOUND_AVAILABLE = False
+    print("Warning: playsound library not found. Sound notifications will be disabled. Install with 'pip install playsound'")
+try:
+    import pyautogui
+    PYAUTOGUI_AVAILABLE = True
+except ImportError:
+    PYAUTOGUI_AVAILABLE = False
+    print("Warning: pyautogui library not found. Browser reload simulation will be disabled. Install with 'pip install pyautogui'")
+try:
+    from PIL import Image, ImageTk
+    PILLOW_AVAILABLE = True
+except ImportError:
+    PILLOW_AVAILABLE = False
+    print("Warning: Pillow library (PIL) not found. Custom PNG icon support will be limited or unavailable.")
+    print("Install with 'pip install Pillow' for full custom icon support.")
 
-# Constants
+
+# --- Constants ---
+# Paths
+SCRIPT_DIR = Path(__file__).parent.resolve() # For robust asset paths
 HOSTS_FILE_PATH = "/etc/hosts"
 BLOCK_LIST_FILE_PATH = Path.home() / ".website_blocker_list.txt"
 CONFIG_FILE_PATH = Path.home() / ".pomodoro_blocker_settings.json"
+SOUND_DIR = SCRIPT_DIR / "sound" # Centralized sound directory
+SCRIPT_DIR = Path(__file__).parent.resolve() # For robust asset paths
+APP_ICON_PATH = SCRIPT_DIR / "pom.png"  # Assuming your icon is named app_icon.png and is in the same directory
+
+# Network
 REDIRECT_IP = "127.0.0.1"
 POMODORO_COMMENT = "# Added by PomodoroBlocker"
 
+# Default Durations (minutes)
 DEFAULT_FOCUS_DURATION_MINUTES = 25
 DEFAULT_SHORT_BREAK_DURATION_MINUTES = 5
 DEFAULT_LONG_BREAK_DURATION_MINUTES = 15
 DEFAULT_EATING_BREAK_DURATION_MINUTES = 30
 DEFAULT_POMODOROS_FOR_FULL_XP = 4
+DEFAULT_SEQUENCE = [
+    {'type': "Focus", 'name': "Focus"},
+    {'type': "Short Break", 'name': "Short Break"},
+    {'type': "Focus", 'name': "Focus"},
+    {'type': "Short Break", 'name': "Short Break"},
+    {'type': "Focus", 'name': "Focus"},
+    {'type': "Short Break", 'name': "Short Break"},
+    {'type': "Focus", 'name': "Focus"},
+    {'type': "Long Break", 'name': "Long Break"},
+    {'type': "Focus", 'name': "Focus"},
+    {'type': "Eating Break", 'name': "Eating Break"},
+    {'type': "Focus", 'name': "Focus"}
+]
 
-# Circle Timer Constants
-CIRCLE_CANVAS_SIZE = 200
+# Sound Files (using resolved paths)
+SOUND_FOCUS_COMPLETE = SOUND_DIR / "focus_complete.mp3"
+SOUND_BREAK_COMPLETE = SOUND_DIR / "focus_complete.mp3"
+
+# --- UI Appearance Constants ---
+# Circle Timer
+CIRCLE_CANVAS_SIZE = 180
 CIRCLE_PADDING = 10
-CIRCLE_THICKNESS = 10
-CIRCLE_BG_COLOR = "grey70"
+CIRCLE_THICKNESS = 12
+CIRCLE_BG_COLOR = "grey80"
 CIRCLE_FG_COLOR_FOCUS = "tomato"
 CIRCLE_FG_COLOR_BREAK = "medium sea green"
 CIRCLE_TEXT_COLOR = "black"
 
-# XP Bar Constants
-XP_BAR_HEIGHT = 25
-XP_BAR_WIDTH_FACTOR = 0.9
-XP_BAR_BG_COLOR = "grey50"
-XP_BAR_FG_COLOR = "light green"
-XP_BAR_SHADOW_COLOR = "white"
+# XP Bar
+XP_BAR_HEIGHT = 22
+XP_BAR_BG_COLOR = "grey60"
+XP_BAR_FG_COLOR = "forest green"
+XP_BAR_HIGHLIGHT_COLOR = "pale green"
 XP_BAR_TEXT_COLOR = "black"
-XP_BAR_CORNER_RADIUS = 8
+XP_BAR_CORNER_RADIUS = 7
 
-# Icon Constants
-STOP_ICON_SIZE = 50
-STOP_ICON_PADDING = 5
-STOP_ICON_SQUARE_COLOR_ACTIVE = "firebrick"
-STOP_ICON_SQUARE_COLOR_DISABLED = "gray60"
+# Icons
+ICON_SIZE = 42
+ICON_PADDING_STOP = 6
+ICON_PADDING_PLAY_PAUSE = 7
 
-PAUSE_PLAY_ICON_SIZE = 50
-PAUSE_PLAY_ICON_PADDING = 6 # Adjusted for better visual balance of play/pause symbols
-PAUSE_ICON_COLOR_ACTIVE = "dodger blue"
+STOP_ICON_COLOR_ACTIVE = "firebrick"
+STOP_ICON_COLOR_DISABLED = "gray75"
+
+PAUSE_ICON_COLOR_ACTIVE = "royal blue"
 PLAY_ICON_COLOR_ACTIVE = "lime green"
-PAUSE_PLAY_ICON_COLOR_DISABLED = "gray70"
-
+PAUSE_PLAY_ICON_COLOR_DISABLED = "gray75"
 
 # +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-# BlockListManagerWindow Class (Remains Unchanged)
+# BlockListManagerWindow Class
 # +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 class BlockListManagerWindow(tk.Toplevel):
     def __init__(self, master, app_controller):
@@ -62,12 +108,12 @@ class BlockListManagerWindow(tk.Toplevel):
         self.transient(master)
         self.grab_set()
 
-        ttk.Label(self, text="Website (e.g., example.com):").grid(row=0, column=0, padx=10, pady=5, sticky="w")
+        ttk.Label(self, text="Website (e.g., example.com):").grid(row=0, column=0, padx=10, pady=(10,5), sticky="w") # Added top padding
         self.website_entry_manager = ttk.Entry(self, width=30)
-        self.website_entry_manager.grid(row=0, column=1, padx=10, pady=5, sticky="ew")
+        self.website_entry_manager.grid(row=0, column=1, padx=10, pady=(10,5), sticky="ew")
 
         self.add_button_manager = ttk.Button(self, text="Add to Block List", command=self._ui_add_website)
-        self.add_button_manager.grid(row=0, column=2, padx=5, pady=5)
+        self.add_button_manager.grid(row=0, column=2, padx=5, pady=(10,5))
 
         ttk.Label(self, text="Blocked Websites:").grid(row=1, column=0, padx=10, pady=5, sticky="nw")
         self.listbox_frame_manager = ttk.Frame(self)
@@ -107,7 +153,6 @@ class BlockListManagerWindow(tk.Toplevel):
         if success:
             self._refresh_listbox()
             self.website_entry_manager.delete(0, tk.END)
-            messagebox.showinfo("Success", message, parent=self)
         else:
             messagebox.showwarning("Info", message, parent=self)
 
@@ -120,34 +165,356 @@ class BlockListManagerWindow(tk.Toplevel):
         success, message = self.app_controller.remove_domain_from_blocklist_core(selected_website)
         if success:
             self._refresh_listbox()
-            messagebox.showinfo("Success", message, parent=self)
         else:
             messagebox.showerror("Error", "Could not unblock selected website.", parent=self)
 
 # +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-# PomodoroWebsiteBlocker Class
+# RepeatingNotificationWindow Class
+# +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+class RepeatingNotificationWindow(tk.Toplevel):
+    def __init__(self, master, title, message, sound_file_to_repeat, on_ok_callback, app_controller):
+        super().__init__(master)
+        self.master_window = master
+        self.app_controller = app_controller # Instance of PomodoroWebsiteBlocker
+        self.title(title)
+        
+        self.transient(master)
+        self.focus_set() 
+        self.lift() 
+
+        self.sound_file_to_repeat = sound_file_to_repeat
+        self.on_ok_callback = on_ok_callback
+        
+        self._is_destroyed = False # Flag to prevent operations after destroy
+        self._repetition_active = True # Controls the sound repetition loop
+        self._after_id_pause = None  # Stores ID for the 5-second pause timer
+
+        self.geometry("350x150") 
+        main_frame = ttk.Frame(self, padding="20")
+        main_frame.pack(expand=True, fill=tk.BOTH)
+
+        message_label = ttk.Label(main_frame, text=message, wraplength=300, justify=tk.CENTER)
+        message_label.pack(pady=(0, 20), expand=True)
+
+        ok_button = ttk.Button(main_frame, text="OK", command=self._on_ok, style="Accent.TButton")
+        ok_button.pack(pady=10)
+
+        self.protocol("WM_DELETE_WINDOW", self._on_close)
+        
+        self.update_idletasks() 
+        master_x = master.winfo_x()
+        master_y = master.winfo_y()
+        master_width = master.winfo_width()
+        master_height = master.winfo_height()
+        win_width = self.winfo_width()
+        win_height = self.winfo_height()
+        x = master_x + (master_width // 2) - (win_width // 2)
+        y = master_y + (master_height // 2) - (win_height // 2)
+        self.geometry(f'+{x}+{y}')
+        
+        self._play_sound_and_initiate_next_cycle() # Start the cycle
+
+    def _play_sound_and_initiate_next_cycle(self): # <--- THIS METHOD WAS MISSING/INCORRECT
+        if not self._repetition_active or self._is_destroyed:
+            return
+        
+        self.app_controller._play_sound_with_callback_on_finish(
+            self.sound_file_to_repeat,
+            self._handle_sound_playback_finished # Pass the method itself as a callback
+        )
+
+    def _handle_sound_playback_finished(self): # This method IS in your file
+        """Called (in main thread) after a sound playback attempt finishes."""
+        if not self._repetition_active or self._is_destroyed:
+            return
+
+        if self._after_id_pause: 
+            self.after_cancel(self._after_id_pause)
+            
+        # Schedule the *next call to start playing the sound*, after the pause
+        self._after_id_pause = self.after(5000, self._play_sound_and_initiate_next_cycle)
+
+    def _stop_sound_repetition_cycle(self): # This method IS in your file
+        self._repetition_active = False 
+        if self._after_id_pause:
+            self.after_cancel(self._after_id_pause)
+            self._after_id_pause = None
+
+    def _on_ok(self): # This method IS in your file
+        self._stop_sound_repetition_cycle()
+        if self.on_ok_callback:
+            self.on_ok_callback()
+        self.destroy() 
+
+    def _on_close(self): # This method IS in your file
+        self._on_ok() 
+
+    def destroy(self): # This method IS in your file
+        self._is_destroyed = True 
+        self._stop_sound_repetition_cycle()
+        super().destroy()
+    
+    # REMOVE the old _start_repeating_sound and _stop_repeating_sound methods
+    # from your current RepeatingNotificationWindow class (lines 179-190 in your file)
+    # as they implement the older, overlapping logic.
+
+# +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+# SequenceEditorWindow Class
+# +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+class SequenceEditorWindow(tk.Toplevel):
+    def __init__(self, master, app_controller):
+        super().__init__(master)
+        self.app_controller = app_controller
+        self.title("Edit Pomodoro Sequence")
+        self.geometry("550x550") # Adjusted size
+        self.transient(master)
+        self.grab_set()
+
+        # Make a copy of the current sequence to edit
+        self.editable_sequence = list(self.app_controller.custom_sequence)
+        self.session_types = ["Focus", "Short Break", "Long Break", "Eating Break"]
+
+        self.base_time = datetime.datetime.now()
+
+        # --- UI Elements ---
+        # Instructions
+        instruction_label = ttk.Label(self, text="Define your Pomodoro sequence. Use buttons to add, remove, or reorder sessions.")
+        instruction_label.grid(row=0, column=0, columnspan=3, padx=10, pady=10, sticky="w")
+        
+        # Current Sequence Listbox
+        listbox_frame = ttk.LabelFrame(self, text="Current Sequence")
+        listbox_frame.grid(row=1, column=0, columnspan=3, padx=10, pady=5, sticky="nsew")
+        listbox_frame.grid_columnconfigure(0, weight=1)
+        listbox_frame.grid_rowconfigure(0, weight=1)
+
+        self.sequence_listbox = tk.Listbox(listbox_frame, selectmode=tk.SINGLE, height=10)
+        self.sequence_listbox.grid(row=0, column=0, sticky="nsew")
+        listbox_scrollbar = ttk.Scrollbar(listbox_frame, orient=tk.VERTICAL, command=self.sequence_listbox.yview)
+        self.sequence_listbox.configure(yscrollcommand=listbox_scrollbar.set)
+        listbox_scrollbar.grid(row=0, column=1, sticky="ns")
+        self.sequence_listbox.bind("<Return>", self._rename_selected_session_dialog) # Bind Enter key
+
+        # Add Session Buttons Frame
+        add_buttons_frame = ttk.LabelFrame(self, text="Add Session Type")
+        # MODIFICATION: Ensure add_buttons_frame spans across available columns if others do, or is wide enough
+        add_buttons_frame.grid(row=2, column=0, columnspan=3, padx=10, pady=5, sticky="ew") # Ensure it spans like listbox
+        
+        # Explicit 2x2 grid for 4 buttons
+        button_configs = [
+            {"text": f"Add {self.session_types[0]}", "command": lambda: self._add_session_type(self.session_types[0]), "row": 0, "col": 0},
+            {"text": f"Add {self.session_types[1]}", "command": lambda: self._add_session_type(self.session_types[1]), "row": 0, "col": 1},
+            {"text": f"Add {self.session_types[2]}", "command": lambda: self._add_session_type(self.session_types[2]), "row": 1, "col": 0},
+            {"text": f"Add {self.session_types[3]}", "command": lambda: self._add_session_type(self.session_types[3]), "row": 1, "col": 1},
+        ]
+
+        for i in range(2): 
+            add_buttons_frame.grid_columnconfigure(i, weight=1)
+
+        for config in button_configs:
+            btn = ttk.Button(add_buttons_frame, text=config["text"], command=config["command"])
+            btn.grid(row=config["row"], column=config["col"], padx=5, pady=5, sticky="ew")
+
+
+        # Modify Sequence Buttons Frame
+        modify_buttons_frame = ttk.Frame(self)
+        modify_buttons_frame.grid(row=3, column=0, padx=10, pady=5, sticky="ew")
+
+        self.remove_button = ttk.Button(modify_buttons_frame, text="Remove Selected", command=self._remove_selected_session)
+        self.remove_button.pack(side=tk.LEFT, padx=5, pady=5, expand=True, fill=tk.X)
+        
+        self.move_up_button = ttk.Button(modify_buttons_frame, text="Move Up", command=self._move_selected_session_up)
+        self.move_up_button.pack(side=tk.LEFT, padx=5, pady=5, expand=True, fill=tk.X)
+
+        self.move_down_button = ttk.Button(modify_buttons_frame, text="Move Down", command=self._move_selected_session_down)
+        self.move_down_button.pack(side=tk.LEFT, padx=5, pady=5, expand=True, fill=tk.X)
+
+        # Action Buttons (Save, Cancel) Frame
+        action_buttons_frame = ttk.Frame(self)
+        action_buttons_frame.grid(row=4, column=0, columnspan=3, padx=10, pady=(10,10), sticky="sew") # Stick to south-east-west
+        action_buttons_frame.grid_columnconfigure(0, weight=1) # Allow cancel to take space
+        action_buttons_frame.grid_columnconfigure(1, weight=1) # Allow save to take space
+
+        self.save_button = ttk.Button(action_buttons_frame, text="Save Sequence", command=self._save_sequence, style="Accent.TButton") # Using Accent style if available
+        self.save_button.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
+
+        self.cancel_button = ttk.Button(action_buttons_frame, text="Cancel", command=self.destroy)
+        self.cancel_button.grid(row=0, column=0, padx=5, pady=5, sticky="ew")
+        
+        # Configure grid weights for main window
+        self.grid_rowconfigure(1, weight=1) # Listbox frame should expand
+        self.grid_columnconfigure(0, weight=1)
+
+        self._refresh_listbox()
+        self.protocol("WM_DELETE_WINDOW", self.destroy) # Ensure grab_set is released on close via X
+
+    def _rename_selected_session_dialog(self, event=None): # event is passed by bind
+        selected_indices = self.sequence_listbox.curselection()
+        if not selected_indices:
+            # This shouldn't happen if bound to <Return> on a selected item, but good check
+            return 
+
+        index = selected_indices[0]
+        current_item = self.editable_sequence[index]
+        current_name = current_item.get('name', current_item.get('type', ''))
+
+        new_name = simpledialog.askstring("Rename Session", 
+                                        f"Enter new name for '{current_name}':",
+                                        initialvalue=current_name,
+                                        parent=self)
+
+        if new_name and new_name.strip(): # If user provided a new name (not None or empty)
+            self.editable_sequence[index]['name'] = new_name.strip()
+            self._refresh_listbox()
+            # Re-select the item
+            self.sequence_listbox.selection_set(index)
+            self.sequence_listbox.activate(index)
+            self.sequence_listbox.see(index)
+        elif new_name == "": # User entered an empty string
+            messagebox.showwarning("Invalid Name", "Session name cannot be empty.", parent=self)
+
+    def _refresh_listbox(self):
+        self.sequence_listbox.delete(0, tk.END)
+        
+        if not self.editable_sequence:
+            self.sequence_listbox.insert(tk.END, "Sequence is empty. Add sessions to begin.")
+            return
+
+        current_projected_time = self.base_time
+        for i, item in enumerate(self.editable_sequence):
+            # item is a dict like {'type': 'Focus', 'name': 'My Focus Time'}
+            display_name = item.get('name', item.get('type', 'Unknown Session'))
+            
+            try:
+                # Get duration from the main app controller
+                duration_minutes = self.app_controller._get_duration_for_type(item['type'])
+            except Exception as e:
+                print(f"Error getting duration for type {item.get('type', 'N/A')}: {e}")
+                duration_minutes = 0 # Default to 0 if type is unknown or causes error
+            
+            # Add the duration of the current session to project its end time
+            current_projected_time += datetime.timedelta(minutes=duration_minutes)
+            time_str = current_projected_time.strftime("%H:%M") # Format as HH:MM
+            
+            # Using an em-dash (—) as requested in your example "focus — 8:45"
+            self.sequence_listbox.insert(tk.END, f"{i+1}. {display_name} — {time_str}")
+
+
+    def _add_session_type(self, session_type_str):
+        # New items get their type as their initial name
+        new_item = {'type': session_type_str, 'name': session_type_str}
+        self.editable_sequence.append(new_item)
+        self._refresh_listbox()
+        self.sequence_listbox.see(tk.END) 
+
+    def _remove_selected_session(self):
+        selected_indices = self.sequence_listbox.curselection()
+        if not selected_indices:
+            messagebox.showwarning("Selection Error", "Please select a session to remove.", parent=self)
+            return
+        
+        index_to_remove = selected_indices[0]
+        del self.editable_sequence[index_to_remove]
+        self._refresh_listbox()
+
+        # Optionally re-select an item
+        if self.editable_sequence:
+            new_selection_index = min(index_to_remove, len(self.editable_sequence) - 1)
+            if new_selection_index >=0:
+                self.sequence_listbox.selection_set(new_selection_index)
+                self.sequence_listbox.activate(new_selection_index)
+
+
+    def _move_selected_session_up(self):
+        selected_indices = self.sequence_listbox.curselection()
+        if not selected_indices:
+            messagebox.showwarning("Selection Error", "Please select a session to move.", parent=self)
+            return
+        
+        index = selected_indices[0]
+        if index == 0: # Already at the top
+            return
+        
+        # Swap with the item above
+        item_to_move = self.editable_sequence.pop(index)
+        self.editable_sequence.insert(index - 1, item_to_move)
+        
+        self._refresh_listbox()
+        self.sequence_listbox.selection_set(index - 1) # Keep the moved item selected
+        self.sequence_listbox.activate(index - 1)
+        self.sequence_listbox.see(index - 1)
+
+
+    def _move_selected_session_down(self):
+        selected_indices = self.sequence_listbox.curselection()
+        if not selected_indices:
+            messagebox.showwarning("Selection Error", "Please select a session to move.", parent=self)
+            return
+        
+        index = selected_indices[0]
+        if index == len(self.editable_sequence) - 1: # Already at the bottom
+            return
+            
+        # Swap with the item below
+        item_to_move = self.editable_sequence.pop(index)
+        self.editable_sequence.insert(index + 1, item_to_move)
+
+        self._refresh_listbox()
+        self.sequence_listbox.selection_set(index + 1) # Keep the moved item selected
+        self.sequence_listbox.activate(index + 1)
+        self.sequence_listbox.see(index + 1)
+
+
+    def _save_sequence(self):
+        if not self.editable_sequence:
+            if not messagebox.askyesno("Empty Sequence", 
+                                       "The sequence is empty. Saving will result in no defined sequence. Continue?",
+                                       parent=self):
+                return
+
+        self.app_controller.custom_sequence = list(self.editable_sequence) # Update the main app's sequence
+        self.app_controller._save_settings() # Persist to file
+        
+        # If the timer is idle, restarting the sequence will pick up the new one.
+        # If a sequence is active, it will complete, and the new one will be used next time.
+        # Reset current_sequence_index in main app if it's idle, so "Start Sequence" starts fresh.
+        if not self.app_controller.timer_running:
+            self.app_controller.current_sequence_index = -1
+
+        messagebox.showinfo("Sequence Saved", "The new Pomodoro sequence has been saved.", parent=self)
+        self.destroy()
+
+# +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+# Main Application Class: PomodoroWebsiteBlocker
 # +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 class PomodoroWebsiteBlocker:
     def __init__(self, root_window):
         self.root = root_window
         self.root.title("Pomodoro XP Blocker")
-        self.root.geometry(f"500x{580 + CIRCLE_CANVAS_SIZE // 3}") # Adjusted for new layout
+        estimated_height = 10 + 30 + 20 + ICON_SIZE + 20 + CIRCLE_CANVAS_SIZE + 20 + (3 * (30 + 10)) + 30 + XP_BAR_HEIGHT + 30 + 20
+        self.root.geometry(f"500x{estimated_height}")
+
+        # --- MODIFICATION: Initialize sequence attributes EARLIER ---
+        self.custom_sequence = [] 
+        self.current_sequence_index = -1
+        # --- END MODIFICATION ---
 
         if not self._is_admin():
             messagebox.showerror("Admin Privileges Required", "This application must be run with sudo privileges.")
             self.root.destroy(); return
 
-        self.focus_duration_minutes = DEFAULT_FOCUS_DURATION_MINUTES
-        self.short_break_duration_minutes = DEFAULT_SHORT_BREAK_DURATION_MINUTES
-        self.long_break_duration_minutes = DEFAULT_LONG_BREAK_DURATION_MINUTES
-        self.eating_break_duration_minutes = DEFAULT_EATING_BREAK_DURATION_MINUTES
-        self.pomodoros_for_full_xp = DEFAULT_POMODOROS_FOR_FULL_XP
-        self._load_settings()
+        self._initialize_durations()
+        self._load_settings() # This will now also load custom_sequence
+
+        self._timer_id = None
+        self.block_list_manager_window = None
+        self.sequence_editor_window = None
+        self.notification_window = None
+        self.reload_attempted_early = False
 
         self.blocked_websites = set()
         self.pomodoro_count = 0
         self.timer_running = False
-        self.timer_paused = False # NEW
+        self.timer_paused = False
         self.current_state = "Idle"
         self.current_break_type = ""
         self.remaining_seconds = 0
@@ -156,456 +523,1047 @@ class PomodoroWebsiteBlocker:
         self.block_list_manager_window = None
 
         self._create_menubar()
-
-        # --- UI Layout ---
-        # Row 0: Separator
-        ttk.Separator(self.root, orient='horizontal').grid(row=0, column=0, columnspan=4, sticky='ew', pady=5)
-
-        # Row 1: Status Label
-        self.timer_label = ttk.Label(self.root, text="Status: Idle", font=("Helvetica", 14))
-        self.timer_label.grid(row=1, column=0, columnspan=4, padx=10, pady=5)
-
-        # --- Row 2: Control Icons and Circular Timer ---
-        timer_controls_frame = ttk.Frame(self.root)
-        # Grid the frame to span all columns and allow it to expand horizontally
-        timer_controls_frame.grid(row=2, column=0, columnspan=4, sticky="ew", pady=10)
-        # Make the frame's single column (where we'll pack) expand to fill the space
-        timer_controls_frame.grid_columnconfigure(0, weight=1)
-
-
-        # Stop Icon (Left) - Pack it to the left within the frame
-        self.stop_icon_canvas = tk.Canvas(timer_controls_frame, width=STOP_ICON_SIZE, height=STOP_ICON_SIZE,
-                                          bg=self.root.cget('bg'), highlightthickness=0, cursor="hand2")
-        self.stop_icon_canvas.pack(side=tk.LEFT, padx=(30, 5), pady=5) # padx (left, right)
-        self.stop_icon_canvas.bind("<Button-1>", self._on_stop_icon_click)
-        self._draw_stop_icon(is_enabled=False)
-
-        # Pause/Play Icon (Right) - Pack it to the right within the frame
-        self.pause_play_icon_canvas = tk.Canvas(timer_controls_frame, width=PAUSE_PLAY_ICON_SIZE, height=PAUSE_PLAY_ICON_SIZE,
-                                                bg=self.root.cget('bg'), highlightthickness=0, cursor="hand2")
-        self.pause_play_icon_canvas.pack(side=tk.RIGHT, padx=(5, 30), pady=5)
-        self.pause_play_icon_canvas.bind("<Button-1>", self._on_pause_play_icon_click)
-        self._draw_pause_play_icon(show_play=True, is_enabled=False)
-        
-        # Circular Timer Canvas (Middle) - Pack it to fill remaining space, it will center
-        self.timer_canvas = tk.Canvas(timer_controls_frame, width=CIRCLE_CANVAS_SIZE, height=CIRCLE_CANVAS_SIZE,
-                                      bg=self.root.cget('bg'), highlightthickness=0)
-        # Using pack with expand=True and fill=tk.BOTH would make it take all space.
-        # We want it to center its fixed size.
-        # Packing it last *without* expand=True should center it in the available space
-        # between the left and right packed items.
-        self.timer_canvas.pack(side=tk.TOP, pady=5, expand=False) # Let it take its natural size, pack will center it
-        self._setup_timer_canvas_elements()
-
-
-        # Row 3: Start Focus Button
-        self.start_focus_button = ttk.Button(self.root, text="", command=self._start_focus_session)
-        self.start_focus_button.grid(row=3, column=0, columnspan=4, padx=5, pady=10, sticky="ew")
-
-        # Row 4: Standard Break Buttons
-        self.start_short_break_button = ttk.Button(self.root, text="", command=self._start_short_break_session)
-        self.start_short_break_button.grid(row=4, column=0, columnspan=2, padx=5, pady=10, sticky="ew")
-        self.start_long_break_button = ttk.Button(self.root, text="", command=self._start_long_break_session)
-        self.start_long_break_button.grid(row=4, column=2, columnspan=2, padx=5, pady=10, sticky="ew")
-
-        # Row 5: Eating Break Button
-        self.start_eating_break_button = ttk.Button(self.root, text="", command=self._start_eating_break_session)
-        self.start_eating_break_button.grid(row=5, column=0, columnspan=4, padx=5, pady=10, sticky="ew")
-
-        # Row 6: XP Bar
-        self.xp_bar_canvas = tk.Canvas(self.root, height=XP_BAR_HEIGHT + 25,
-                                       bg=self.root.cget('bg'), highlightthickness=0)
-        self.xp_bar_canvas.grid(row=6, column=0, columnspan=4, padx=10, pady=(10,15), sticky="ew")
-
-        for i in range(4): self.root.grid_columnconfigure(i, weight=1)
+        self._setup_ui()
 
         self._update_button_labels()
         self._load_block_list_from_file()
         self._ensure_all_blocked_sites_are_unblocked_on_startup()
         self._update_timer_display()
         self._draw_xp_bar()
-        self._update_ui_for_timer_state()
+        self._update_ui_for_timer_state() # Now sequence attributes are guaranteed to exist
+
+        # --- MODIFICATION: Removed redundant block of admin check and settings load ---
+        # self.custom_sequence = [] # Will be loaded from settings # MOVED EARLIER
+        # self.current_sequence_index = -1  # -1 indicates sequence not active or finished # MOVED EARLIER
+
+        # if not self._is_admin(): # THIS ENTIRE BLOCK IS REDUNDANT AND REMOVED
+        #     messagebox.showerror("Admin Privileges Required", "This application must be run with sudo privileges.")
+        #     self.root.destroy(); return
+        #
+        # self._initialize_durations()
+        # self._load_settings()
+        # --- END MODIFICATION ---
 
         self.root.bind("<Configure>", self._on_window_resize)
+        # self._update_button_labels() # Call was here, ensure it's effectively called after settings load (it is, earlier)
+
+    # --- MODIFICATION: Removed first (incomplete/buggy) definitions of _load_settings, _save_settings, _reset_to_default_settings_and_save ---
+    # Old _load_settings was here (approx lines 194-233) - REMOVED
+    # Old _save_settings was here (approx lines 235-247) - REMOVED
+    # Old _reset_to_default_settings_and_save was here (approx lines 249-257) - REMOVED
+    # --- END MODIFICATION ---
+
+    def _get_duration_for_type(self, session_type_str):
+        if session_type_str == "Focus":
+            return self.focus_duration_minutes
+        elif session_type_str == "Short Break":
+            return self.short_break_duration_minutes
+        elif session_type_str == "Long Break":
+            return self.long_break_duration_minutes
+        elif session_type_str == "Eating Break":
+            return self.eating_break_duration_minutes
+        else:
+            print(f"Warning: Unknown session type '{session_type_str}' in sequence. Defaulting to focus duration.")
+            return self.focus_duration_minutes
+        
+    def _play_sound_with_callback_on_finish(self, sound_file_path_obj, on_finish_callback=None):
+        """
+        Plays a sound in a separate thread.
+        Executes on_finish_callback in the main Tkinter thread when sound finishes or if an error occurs.
+        """
+        if not PLAYSOUND_AVAILABLE:
+            if on_finish_callback:
+                # If sounds are disabled, trigger callback immediately to allow logic to proceed
+                self.root.after(0, on_finish_callback)
+            return
+
+        def play_and_callback():
+            sound_file_str = "" # Initialize for finally block
+            try:
+                sound_file_str = str(sound_file_path_obj) # playsound needs string
+                if sound_file_path_obj.exists():
+                    print(f"Playing sound (with callback): {sound_file_str}")
+                    playsound(sound_file_str) # This is blocking within this thread
+                    print(f"Finished playing sound: {sound_file_str}")
+                else:
+                    print(f"Sound file not found (with callback): {sound_file_str}")
+            except Exception as e:
+                print(f"Error playing sound '{sound_file_str}' (with callback): {e}")
+            finally:
+                # Ensure callback happens even if sound fails, so the repeat logic isn't stuck
+                if on_finish_callback and hasattr(self.root, 'winfo_exists') and self.root.winfo_exists():
+                    # Schedule the callback to run in the main Tkinter thread
+                    self.root.after(0, on_finish_callback)
+                elif on_finish_callback: # Fallback if root doesn't exist (should not happen in this context)
+                    print("Root window for callback no longer exists.")
+
+
+        sound_thread = threading.Thread(target=play_and_callback, daemon=True)
+        sound_thread.start()
+
+    def _simulate_browser_reload(self):
+        if not PYAUTOGUI_AVAILABLE:
+            print("pyautogui library is not available. Skipping browser reload simulation.")
+            # Optionally, inform the user via a non-blocking way if this is critical
+            # messagebox.showinfo("Info", "pyautogui library not found. Browser reload cannot be simulated.", parent=self.root)
+            return
+
+        if not self.root.winfo_exists(): # Ensure main window is still around
+            return
+
+        print("Attempting to simulate browser reload (Cmd/Ctrl+R). Ensure your browser is the active window.")
+        
+        # A very short delay can sometimes help, but it's not a reliable fix for focus issues.
+        # import time # Add 'import time' at the top of your file if you use this
+        # time.sleep(0.2) # Small delay
+
+        try:
+            if sys.platform == "darwin":  # macOS
+                pyautogui.hotkey('command', 'r')
+                print("Simulated Cmd+R")
+            elif sys.platform == "win32" or sys.platform.startswith("linux"):  # Windows or Linux
+                pyautogui.hotkey('ctrl', 'r')
+                print("Simulated Ctrl+R")
+            else:
+                print(f"Browser reload hotkey not configured for platform: {sys.platform}")
+                return # Don't show a message if platform is not common for this action
+            
+            # It's hard to know if it actually worked, so no success message here.
+            # The print statement above is for logging.
+
+        except Exception as e:
+            # pyautogui can raise various errors, e.g., if it can't connect to the display server (common on headless Linux)
+            # or due to permissions issues.
+            print(f"Error attempting to simulate reload hotkey: {e}")
+            error_message = f"Could not simulate browser reload: {e}\n\n"
+            error_message += "Please ensure your browser window was active."
+            if sys.platform == "darwin":
+                error_message += ("\nOn macOS, this application (Terminal or IDE) might need "
+                                  "Accessibility permissions in System Settings > Privacy & Security.")
+            messagebox.showwarning("Reload Simulation Error", error_message, parent=self.root)
+
+    def _proceed_to_next_in_sequence(self):
+        if self.current_sequence_index == -1 and not self.custom_sequence:
+             messagebox.showinfo("Sequence Info", "No custom sequence defined. Please configure one or use manual mode.", parent=self.root)
+             self._reset_session_end_actions() 
+             return
+
+        self.current_sequence_index += 1 
+
+        if self.current_sequence_index < len(self.custom_sequence):
+            next_session_item = self.custom_sequence[self.current_sequence_index]
+            next_session_type_str = next_session_item['type']
+            next_session_display_name = next_session_item['name']
+            duration_minutes = self._get_duration_for_type(next_session_type_str)
+
+            # ... (session_name_for_log, next_up_message, print statements - these are fine) ...
+            session_name_for_log = f"{next_session_display_name} (Type: {next_session_type_str}, {duration_minutes} min)" 
+            next_up_message = f"Next in sequence: {session_name_for_log}"
+            if self.current_sequence_index + 1 < len(self.custom_sequence):
+                next_next_session_item = self.custom_sequence[self.current_sequence_index + 1]
+                next_up_message += f"\nFollowing that: {next_next_session_item['name']}"
+            else:
+                next_up_message += "\nThis is the last session in the sequence."
+            print(next_up_message)
+            
+            self.timer_running = False # Ensure these are not commented out
+            self.current_state = "Idle"  # Ensure these are not commented out
+            success = False
+            
+            if next_session_type_str == "Focus":
+                success = self._start_session_common("Focus", "", duration_minutes)
+                #if success: # If focus session started successfully (sites are now blocked)
+                #    self.root.after(100, self._simulate_browser_reload) # Call after a very brief delay
+            elif next_session_type_str == "Short Break":
+                success = self._start_session_common("Break", "Short", duration_minutes)
+            elif next_session_type_str == "Long Break":
+                success = self._start_session_common("Break", "Long", duration_minutes)
+            elif next_session_type_str == "Eating Break":
+                success = self._start_session_common("Break", "Eating", duration_minutes)
+            else:
+                print(f"Error: Encountered unknown session type '{next_session_type_str}' during sequence progression.")
+                self._reset_session_end_actions()
+                self.current_sequence_index = -1
+                return
+
+            if not success:
+                print("Could not start the next session in the sequence. Sequence interrupted.")
+                self._reset_session_end_actions()
+                self.current_sequence_index = -1
+        else:
+            # ... (sequence finished logic - this is fine) ...
+            self.root.lift()
+            self.root.focus_force()
+            messagebox.showinfo("Sequence Complete", "The defined Pomodoro sequence has finished!", parent=self.root)
+            self._reset_session_end_actions()
+            self.current_sequence_index = -1
+
+    def _initialize_durations(self):
+        """Sets default durations for all timers."""
+        self.focus_duration_minutes = DEFAULT_FOCUS_DURATION_MINUTES
+        self.short_break_duration_minutes = DEFAULT_SHORT_BREAK_DURATION_MINUTES
+        self.long_break_duration_minutes = DEFAULT_LONG_BREAK_DURATION_MINUTES
+        self.eating_break_duration_minutes = DEFAULT_EATING_BREAK_DURATION_MINUTES
+        self.pomodoros_for_full_xp = DEFAULT_POMODOROS_FOR_FULL_XP
+
+    def _setup_ui(self):
+        """Creates and grids all UI elements for the main window."""
+        ttk.Separator(self.root, orient='horizontal').grid(row=0, column=0, columnspan=4, sticky='ew', pady=5)
+        self.timer_label = ttk.Label(self.root, text="Status: Idle", font=("Helvetica", 14, "italic"))
+        self.timer_label.grid(row=1, column=0, columnspan=4, padx=10, pady=(10,0))
+        timer_controls_frame = ttk.Frame(self.root)
+        timer_controls_frame.grid(row=2, column=0, columnspan=4, sticky="ew", pady=(5,15))
+        timer_controls_frame.grid_columnconfigure(0, weight=1)
+        timer_controls_frame.grid_columnconfigure(1, weight=2)
+        timer_controls_frame.grid_columnconfigure(2, weight=1)
+        self.stop_icon_canvas = tk.Canvas(timer_controls_frame, width=ICON_SIZE, height=ICON_SIZE,
+                                          bg=self.root.cget('bg'), highlightthickness=0, cursor="hand2")
+        self.stop_icon_canvas.grid(row=0, column=0, padx=(20, 5), pady=5, sticky="w")
+        self.stop_icon_canvas.bind("<Button-1>", self._on_stop_icon_click)
+        self.timer_canvas = tk.Canvas(timer_controls_frame, width=CIRCLE_CANVAS_SIZE, height=CIRCLE_CANVAS_SIZE,
+                                      bg=self.root.cget('bg'), highlightthickness=0)
+        self.timer_canvas.grid(row=0, column=1, pady=5, sticky="n")
+        self._setup_timer_canvas_elements()
+        self.pause_play_icon_canvas = tk.Canvas(timer_controls_frame, width=ICON_SIZE, height=ICON_SIZE,
+                                                bg=self.root.cget('bg'), highlightthickness=0, cursor="hand2")
+        self.pause_play_icon_canvas.grid(row=0, column=2, padx=(5, 20), pady=5, sticky="e")
+        self.pause_play_icon_canvas.bind("<Button-1>", self._on_pause_play_icon_click)
+        self.start_sequence_button = ttk.Button(self.root, text="Start Sequence", command=self._start_custom_sequence)
+        self.start_sequence_button.grid(row=3, column=0, columnspan=4, padx=20, pady=5, sticky="ew")
+        self.start_short_break_button = ttk.Button(self.root, text="", command=self._start_short_break_session)
+        self.start_short_break_button.grid(row=4, column=0, columnspan=2, padx=(20,5), pady=5, sticky="ew")
+        self.start_long_break_button = ttk.Button(self.root, text="", command=self._start_long_break_session)
+        self.start_long_break_button.grid(row=4, column=2, columnspan=2, padx=(5,20), pady=5, sticky="ew")
+        self.start_eating_break_button = ttk.Button(self.root, text="", command=self._start_eating_break_session)
+        self.start_eating_break_button.grid(row=5, column=0, columnspan=4, padx=20, pady=5, sticky="ew")
+        self.xp_bar_canvas = tk.Canvas(self.root, height=XP_BAR_HEIGHT + 20,
+                                       bg=self.root.cget('bg'), highlightthickness=0)
+        self.xp_bar_canvas.grid(row=6, column=0, columnspan=4, padx=10, pady=(10,5), sticky="ew")
+        counter_frame = ttk.Frame(self.root)
+        counter_frame.grid(row=7, column=0, columnspan=4, sticky="ew", padx=10, pady=(0,10))
+        counter_frame.grid_columnconfigure(0, weight=1)
+        counter_frame.grid_columnconfigure(1, weight=1)
+        self.pomodoros_completed_label = ttk.Label(counter_frame, text="")
+        self.pomodoros_completed_label.grid(row=0, column=0, sticky="w")
+        for i in range(4): self.root.grid_columnconfigure(i, weight=1)
 
     def _on_window_resize(self, event=None):
         if hasattr(self, 'xp_bar_canvas') and self.xp_bar_canvas.winfo_exists():
-            self._draw_xp_bar()
+            self.xp_bar_canvas.after_idle(self._draw_xp_bar)
 
     def _create_rounded_rect(self, canvas, x1, y1, x2, y2, radius, **kwargs):
-        points = [x1 + radius, y1, x1 + radius, y1, x2 - radius, y1, x2 - radius, y1, x2, y1, x2, y1 + radius, x2, y1 + radius, x2, y2 - radius, x2, y2 - radius, x2, y2, x2 - radius, y2, x2 - radius, y2, x1 + radius, y2, x1 + radius, y2, x1, y2, x1, y2 - radius, x1, y2 - radius, x1, y1 + radius, x1, y1 + radius, x1, y1]
+        if x2 < x1 or y2 < y1: return None
+        radius = min(radius, (x2 - x1) / 2, (y2 - y1) / 2)
+        if radius < 0: radius = 0
+        points = [
+            x1 + radius, y1, x2 - radius, y1,
+            x2 - radius, y1, x2, y1, x2, y1 + radius,
+            x2, y1 + radius, x2, y2 - radius,
+            x2, y2 - radius, x2, y2, x2 - radius, y2,
+            x2 - radius, y2, x1 + radius, y2,
+            x1 + radius, y2, x1, y2, x1, y2 - radius,
+            x1, y2 - radius, x1, y1 + radius,
+            x1, y1 + radius, x1, y1, x1 + radius, y1,
+        ]
         return canvas.create_polygon(points, **kwargs, smooth=True)
+
+    def _start_custom_sequence(self):
+        if self.timer_running:
+            messagebox.showwarning("Timer Active", "A session or sequence is already in progress.", parent=self.root)
+            return
+        if not self.custom_sequence:
+            messagebox.showerror("Sequence Error", "No Pomodoro sequence is defined. Check settings.", parent=self.root)
+            return
+        first_session_item = self.custom_sequence[0]
+        first_session_type = first_session_item['type']
+        first_session_name = first_session_item['name']
+        first_duration = self._get_duration_for_type(first_session_type)
+        if not messagebox.askyesno("Start Sequence?", 
+                                f"Start the defined Pomodoro sequence?\nFirst session: {first_session_name} ({first_duration} min)", 
+                                parent=self.root):
+            return
+        self.current_sequence_index = -1
+        self._proceed_to_next_in_sequence()
+        self._update_ui_for_timer_state()
+
+    def _create_menubar(self):
+        menubar = tk.Menu(self.root)
+        edit_menu = tk.Menu(menubar, name='edit', tearoff=0)
+        edit_menu.add_command(label="Manage Blocked Websites...", command=self._open_block_list_manager)
+        edit_menu.add_separator()
+        edit_menu.add_command(label="Set Focus Duration...", command=self._edit_focus_duration)
+        edit_menu.add_command(label="Set Short Break Duration...", command=self._edit_short_break_duration)
+        edit_menu.add_command(label="Set Long Break Duration...", command=self._edit_long_break_duration)
+        edit_menu.add_command(label="Set Eating Break Duration...", command=self._edit_eating_break_duration)
+        edit_menu.add_separator()
+        edit_menu.add_command(label="Set Pomodoros for Full XP...", command=self._edit_pomodoros_for_full_xp)
+        edit_menu.add_separator() # New Separator
+        edit_menu.add_command(label="Edit Pomodoro Sequence...", command=self._open_sequence_editor) # New Menu Item
+        menubar.add_cascade(label="Edit", menu=edit_menu)
+        self.root.config(menu=menubar)
+
+    def _open_sequence_editor(self):
+        if self.sequence_editor_window is None or not self.sequence_editor_window.winfo_exists():
+            self.sequence_editor_window = SequenceEditorWindow(self.root, self) # Pass self as app_controller
+            self.sequence_editor_window.protocol("WM_DELETE_WINDOW", self._on_sequence_editor_close)
+        else:
+            self.sequence_editor_window.lift()
+            self.sequence_editor_window.focus_set()
+
+    def _on_sequence_editor_close(self):
+        if self.sequence_editor_window:
+            self.sequence_editor_window.destroy()
+            self.sequence_editor_window = None
 
     def _draw_xp_bar(self):
         if not hasattr(self, 'xp_bar_canvas') or not self.xp_bar_canvas.winfo_exists(): return
         self.xp_bar_canvas.delete("all")
-        canvas_width = self.xp_bar_canvas.winfo_width(); bar_x_start = 10; bar_y_start = 5
-        if canvas_width <= 1: canvas_width = int(self.root.winfo_width() * XP_BAR_WIDTH_FACTOR * 0.95) if self.root.winfo_width() > 10 else 400 # Ensure root width is available
-        bar_width = canvas_width - (bar_x_start * 2) # Adjust for padding on both sides
-        
-        self._create_rounded_rect(self.xp_bar_canvas, bar_x_start, bar_y_start, bar_x_start + bar_width, bar_y_start + XP_BAR_HEIGHT, XP_BAR_CORNER_RADIUS, fill=XP_BAR_BG_COLOR, outline=XP_BAR_BG_COLOR)
-        xp_percentage = min(self.pomodoro_count / self.pomodoros_for_full_xp, 1.0) if self.pomodoros_for_full_xp > 0 else 0
+        canvas_width = self.xp_bar_canvas.winfo_width()
+        if canvas_width <= 20: canvas_width = 400
+        bar_x_start = 10
+        bar_y_start = 5
+        bar_width = canvas_width - (bar_x_start * 2)
+        if bar_width <= 0: return
+        self._create_rounded_rect(self.xp_bar_canvas, bar_x_start, bar_y_start,
+                                  bar_x_start + bar_width, bar_y_start + XP_BAR_HEIGHT,
+                                  XP_BAR_CORNER_RADIUS, fill=XP_BAR_BG_COLOR, outline=XP_BAR_BG_COLOR)
+        xp_percentage = 0.0
+        if self.pomodoros_for_full_xp > 0:
+            xp_percentage = min(self.pomodoro_count / self.pomodoros_for_full_xp, 1.0)
         filled_width = bar_width * xp_percentage
         if filled_width > 0:
-            self._create_rounded_rect(self.xp_bar_canvas, bar_x_start, bar_y_start, bar_x_start + filled_width, bar_y_start + XP_BAR_HEIGHT, XP_BAR_CORNER_RADIUS, fill=XP_BAR_FG_COLOR, outline=XP_BAR_FG_COLOR)
+            self._create_rounded_rect(self.xp_bar_canvas, bar_x_start, bar_y_start,
+                                      bar_x_start + filled_width, bar_y_start + XP_BAR_HEIGHT,
+                                      XP_BAR_CORNER_RADIUS, fill=XP_BAR_FG_COLOR, outline=XP_BAR_FG_COLOR)
             highlight_thickness = 1
-            if filled_width > highlight_thickness * 2 and XP_BAR_HEIGHT > highlight_thickness * 2:
-                self.xp_bar_canvas.create_line(bar_x_start + XP_BAR_CORNER_RADIUS, bar_y_start + highlight_thickness, bar_x_start + filled_width - XP_BAR_CORNER_RADIUS, bar_y_start + highlight_thickness, fill=XP_BAR_SHADOW_COLOR, width=highlight_thickness)
-                self.xp_bar_canvas.create_line(bar_x_start + highlight_thickness, bar_y_start + XP_BAR_CORNER_RADIUS, bar_x_start + highlight_thickness, bar_y_start + XP_BAR_HEIGHT - XP_BAR_CORNER_RADIUS, fill=XP_BAR_SHADOW_COLOR, width=highlight_thickness)
-                if XP_BAR_CORNER_RADIUS > highlight_thickness:
-                    arc_bbox_tl = (bar_x_start + highlight_thickness, bar_y_start + highlight_thickness, bar_x_start + (XP_BAR_CORNER_RADIUS * 2) - highlight_thickness, bar_y_start + (XP_BAR_CORNER_RADIUS * 2) - highlight_thickness)
-                    self.xp_bar_canvas.create_arc(arc_bbox_tl, start=90, extent=90, style=tk.ARC, outline=XP_BAR_SHADOW_COLOR, width=highlight_thickness)
-        xp_text = f"XP: {self.pomodoro_count} / {self.pomodoros_for_full_xp} Pomodoros"
-        self.xp_bar_canvas.create_text(bar_x_start + bar_width / 2, bar_y_start + XP_BAR_HEIGHT + 10, text=xp_text, font=("Helvetica", 10), fill=XP_BAR_TEXT_COLOR, anchor=tk.CENTER)
+            if filled_width > XP_BAR_CORNER_RADIUS * 2 and XP_BAR_HEIGHT > highlight_thickness * 2:
+                self.xp_bar_canvas.create_line(
+                    bar_x_start + XP_BAR_CORNER_RADIUS, bar_y_start + highlight_thickness,
+                    bar_x_start + filled_width - XP_BAR_CORNER_RADIUS, bar_y_start + highlight_thickness,
+                    fill=XP_BAR_HIGHLIGHT_COLOR, width=highlight_thickness
+                )
+        self.pomodoros_completed_label.config(text=f"XP: {self.pomodoro_count} / {self.pomodoros_for_full_xp} Pomodoros")
 
     def _setup_timer_canvas_elements(self):
-        center_x = CIRCLE_CANVAS_SIZE / 2; center_y = CIRCLE_CANVAS_SIZE / 2
+        center_x = CIRCLE_CANVAS_SIZE / 2
+        center_y = CIRCLE_CANVAS_SIZE / 2
         radius = (CIRCLE_CANVAS_SIZE / 2) - CIRCLE_PADDING
-        x0, y0, x1, y1 = center_x - radius, center_y - radius, center_x + radius, center_y + radius
+        x0 = center_x - radius
+        y0 = center_y - radius
+        x1 = center_x + radius
+        y1 = center_y + radius
         self.arc_bbox = (x0, y0, x1, y1)
-        self.timer_canvas.create_arc(self.arc_bbox, start=0, extent=359.9, outline=CIRCLE_BG_COLOR, width=CIRCLE_THICKNESS, style=tk.ARC)
-        self.progress_arc_id = self.timer_canvas.create_arc(self.arc_bbox, start=90, extent=0, outline=CIRCLE_FG_COLOR_FOCUS, width=CIRCLE_THICKNESS, style=tk.ARC)
-        self.time_text_id = self.timer_canvas.create_text(center_x, center_y, text="00:00", font=("Helvetica", int(CIRCLE_CANVAS_SIZE/5), "bold"), fill=CIRCLE_TEXT_COLOR)
+        self.timer_canvas.create_arc(
+            self.arc_bbox, start=0, extent=359.99,
+            outline=CIRCLE_BG_COLOR, width=CIRCLE_THICKNESS, style=tk.ARC
+        )
+        self.progress_arc_id = self.timer_canvas.create_arc(
+            self.arc_bbox, start=90, extent=0,
+            outline=CIRCLE_FG_COLOR_FOCUS, width=CIRCLE_THICKNESS, style=tk.ARC
+        )
+        self.time_text_id = self.timer_canvas.create_text(
+            center_x, center_y, text="00:00",
+            font=("Helvetica", int(CIRCLE_CANVAS_SIZE / 4.5), "bold"), fill=CIRCLE_TEXT_COLOR
+        )
+
+    def _start_automatic_focus_session(self):
+        print("Starting automatic focus session.")
+        self.timer_running = False
+        self.current_state = "Idle"
+        if not self._start_session_common("Focus", "", self.focus_duration_minutes):
+            self._reset_session_end_actions()
 
     def _update_timer_display(self):
-        mins, secs = divmod(self.remaining_seconds, 60)
-        time_format = f"{mins:02d}:{secs:02d}"
-        self.timer_canvas.itemconfig(self.time_text_id, text=time_format)
-        progress_extent = 0; current_fg_color = CIRCLE_FG_COLOR_FOCUS
+        mins, secs = divmod(max(0, self.remaining_seconds), 60)
+        time_format = f"{int(mins):02d}:{int(secs):02d}"
+        if hasattr(self, 'time_text_id') and self.time_text_id:
+             self.timer_canvas.itemconfig(self.time_text_id, text=time_format)
+        progress_extent = 0
+        current_fg_color = CIRCLE_FG_COLOR_FOCUS
         if self.timer_running and self.total_seconds_for_session > 0:
-            elapsed_seconds = self.total_seconds_for_session - self.remaining_seconds
+            clamped_remaining = max(0, min(self.remaining_seconds, self.total_seconds_for_session))
+            elapsed_seconds = self.total_seconds_for_session - clamped_remaining
             progress_percentage = elapsed_seconds / self.total_seconds_for_session
-            progress_extent = progress_percentage * 359.9
-            if self.current_state == "Focus": current_fg_color = CIRCLE_FG_COLOR_FOCUS
-            elif self.current_state == "Break": current_fg_color = CIRCLE_FG_COLOR_BREAK
-        self.timer_canvas.itemconfig(self.progress_arc_id, extent=-progress_extent, outline=current_fg_color)
-        
-        if self.timer_running:
-            if self.timer_paused:
-                self.timer_label.config(text="Status: Paused")
-            elif self.current_state == "Focus":
-                self.timer_label.config(text="Status: Focus Time")
+            progress_extent = progress_percentage * 359.99
+            if self.current_state == "Focus":
+                current_fg_color = CIRCLE_FG_COLOR_FOCUS
             elif self.current_state == "Break":
-                dur_attr = f"{self.current_break_type.lower()}_break_duration_minutes"
-                duration = getattr(self, dur_attr, "?")
-                self.timer_label.config(text=f"Status: {self.current_break_type} Break ({duration} min)")
-        else:
-            self.timer_label.config(text="Status: Idle")
+                current_fg_color = CIRCLE_FG_COLOR_BREAK
+        if hasattr(self, 'progress_arc_id') and self.progress_arc_id:
+            self.timer_canvas.itemconfig(self.progress_arc_id, extent=-progress_extent, outline=current_fg_color)
+        if hasattr(self, 'timer_label'):
+            status_text = "Status: Idle"
+            if self.timer_running:
+                if self.timer_paused:
+                    status_text = f"Status: Paused ({self.current_state})"
+                elif self.current_state == "Focus":
+                    status_text = f"Status: Focus Time ({self.focus_duration_minutes} min)"
+                elif self.current_state == "Break":
+                    break_duration_attr = f"{self.current_break_type.lower()}_break_duration_minutes"
+                    current_break_total_duration = getattr(self, break_duration_attr, self.short_break_duration_minutes)
+                    status_text = f"Status: {self.current_break_type} Break ({current_break_total_duration} min)"
+            self.timer_label.config(text=status_text)
 
-    def _create_menubar(self):
-        menubar = tk.Menu(self.root); edit_menu = tk.Menu(menubar, name='edit', tearoff=0)
-        edit_menu.add_command(label="Manage Blocked Websites...", command=self._open_block_list_manager); edit_menu.add_separator()
-        edit_menu.add_command(label="Set Focus Duration...", command=self._edit_focus_duration)
-        edit_menu.add_command(label="Set Short Break Duration...", command=self._edit_short_break_duration)
-        edit_menu.add_command(label="Set Long Break Duration...", command=self._edit_long_break_duration)
-        edit_menu.add_command(label="Set Eating Break Duration...", command=self._edit_eating_break_duration); edit_menu.add_separator()
-        edit_menu.add_command(label="Set Pomodoros for Full XP...", command=self._edit_pomodoros_for_full_xp)
-        menubar.add_cascade(label="Edit", menu=edit_menu); self.root.config(menu=menubar)
-
+    # --- MODIFICATION: This is now the primary (and only) _load_settings method ---
     def _load_settings(self):
         try:
             if CONFIG_FILE_PATH.exists():
-                with open(CONFIG_FILE_PATH, "r", encoding='utf-8') as f: settings = json.load(f)
-                self.focus_duration_minutes = int(settings.get("focus_duration_minutes", DEFAULT_FOCUS_DURATION_MINUTES))
-                self.short_break_duration_minutes = int(settings.get("short_break_duration_minutes", DEFAULT_SHORT_BREAK_DURATION_MINUTES))
-                self.long_break_duration_minutes = int(settings.get("long_break_duration_minutes", DEFAULT_LONG_BREAK_DURATION_MINUTES))
-                self.eating_break_duration_minutes = int(settings.get("eating_break_duration_minutes", DEFAULT_EATING_BREAK_DURATION_MINUTES))
-                self.pomodoros_for_full_xp = int(settings.get("pomodoros_for_full_xp", DEFAULT_POMODOROS_FOR_FULL_XP))
-                if not (0 < self.focus_duration_minutes <= 180): self.focus_duration_minutes = DEFAULT_FOCUS_DURATION_MINUTES
-                if not (0 < self.short_break_duration_minutes <= 60): self.short_break_duration_minutes = DEFAULT_SHORT_BREAK_DURATION_MINUTES
-                if not (0 < self.long_break_duration_minutes <= 90): self.long_break_duration_minutes = DEFAULT_LONG_BREAK_DURATION_MINUTES
+                with open(CONFIG_FILE_PATH, "r", encoding='utf-8') as f:
+                    settings = json.load(f)
+
+                self.focus_duration_minutes = int(settings.get("focus_duration_minutes", self.focus_duration_minutes))
+                self.short_break_duration_minutes = int(settings.get("short_break_duration_minutes", self.short_break_duration_minutes))
+                self.long_break_duration_minutes = int(settings.get("long_break_duration_minutes", self.long_break_duration_minutes))
+                self.eating_break_duration_minutes = int(settings.get("eating_break_duration_minutes", self.eating_break_duration_minutes))
+                self.pomodoros_for_full_xp = int(settings.get("pomodoros_for_full_xp", self.pomodoros_for_full_xp))
+
+                loaded_sequence_raw = settings.get("custom_sequence", DEFAULT_SEQUENCE)
+
+                if not loaded_sequence_raw: # Handle empty sequence from file
+                    self.custom_sequence = list(DEFAULT_SEQUENCE) # Use a fresh copy of default
+                    print("Empty custom sequence in settings, using default.")
+                elif isinstance(loaded_sequence_raw[0], str): # Check if it's old format (list of strings)
+                    print("Old sequence format detected in settings, converting to new format.")
+                    self.custom_sequence = [{'type': item_str, 'name': item_str} for item_str in loaded_sequence_raw]
+                elif isinstance(loaded_sequence_raw, list) and all(isinstance(item, dict) and 'type' in item and 'name' in item for item in loaded_sequence_raw):
+                    self.custom_sequence = loaded_sequence_raw # Already new format and seems valid
+                else: # Unrecognized format
+                    print("Invalid or unrecognized custom sequence format in settings, using default.")
+                    self.custom_sequence = list(DEFAULT_SEQUENCE) 
+
+                if not (1 <= self.focus_duration_minutes <= 180): self.focus_duration_minutes = DEFAULT_FOCUS_DURATION_MINUTES
+                if not (1 <= self.short_break_duration_minutes <= 60): self.short_break_duration_minutes = DEFAULT_SHORT_BREAK_DURATION_MINUTES
+                if not (1 <= self.long_break_duration_minutes <= 90): self.long_break_duration_minutes = DEFAULT_LONG_BREAK_DURATION_MINUTES
                 if not (5 <= self.eating_break_duration_minutes <= 120): self.eating_break_duration_minutes = DEFAULT_EATING_BREAK_DURATION_MINUTES
                 if not (1 <= self.pomodoros_for_full_xp <= 100): self.pomodoros_for_full_xp = DEFAULT_POMODOROS_FOR_FULL_XP
-            else: self._save_settings()
-        except Exception as e: print(f"Error loading settings: {e}. Using defaults."); self._reset_to_default_settings_and_save()
+            else:
+                # Config file doesn't exist, set default sequence (already in new format)
+                self.custom_sequence = list(DEFAULT_SEQUENCE) # Ensure it's a fresh copy of the dict list
+                self._save_settings()
+            
+        except (json.JSONDecodeError, ValueError, TypeError) as e:
+            print(f"Error loading settings file '{CONFIG_FILE_PATH}': {e}. Using default values and attempting to save them.")
+            self._reset_to_default_settings_and_save()
+        except Exception as e:
+            print(f"An unexpected error occurred while loading settings: {e}. Using default values.")
+            self._reset_to_default_settings_and_save()
+        finally:
+            # --- MODIFICATION: Ensure sequence index is reset ---
+            self.current_sequence_index = -1
+            # --- END MODIFICATION ---
 
+    # --- MODIFICATION: This is now the primary (and only) _reset_to_default_settings_and_save method ---
     def _reset_to_default_settings_and_save(self):
-        self.focus_duration_minutes = DEFAULT_FOCUS_DURATION_MINUTES; self.short_break_duration_minutes = DEFAULT_SHORT_BREAK_DURATION_MINUTES
-        self.long_break_duration_minutes = DEFAULT_LONG_BREAK_DURATION_MINUTES; self.eating_break_duration_minutes = DEFAULT_EATING_BREAK_DURATION_MINUTES
-        self.pomodoros_for_full_xp = DEFAULT_POMODOROS_FOR_FULL_XP; self._save_settings()
+        """Resets all durations and sequence to their hardcoded defaults and saves them."""
+        self._initialize_durations()
+        self.custom_sequence = list(DEFAULT_SEQUENCE) # Use a copy of the default (now list of dicts)
+        self.current_sequence_index = -1
+        self._save_settings()
+        self._update_button_labels()
 
+    def _edit_duration_dialog(self, title, prompt, current_value_attr, min_val=1, max_val=120):
+        new_duration = simpledialog.askinteger(
+            title, prompt,
+            parent=self.root,
+            minvalue=min_val,
+            maxvalue=max_val,
+            initialvalue=getattr(self, current_value_attr)
+        )
+        if new_duration is not None:
+            setattr(self, current_value_attr, new_duration)
+            self._update_button_labels()
+            self._save_settings()
+            if current_value_attr == "pomodoros_for_full_xp":
+                 self._draw_xp_bar()
+                 if self.pomodoro_count >= self.pomodoros_for_full_xp:
+                     messagebox.showinfo("XP Goal Met!", "You've already met or exceeded the new XP goal!", parent=self.root)
+
+    def _edit_focus_duration(self):
+        self._edit_duration_dialog("Focus Duration", "Enter focus duration (minutes):", "focus_duration_minutes", 1, 180)
+    def _edit_short_break_duration(self):
+        self._edit_duration_dialog("Short Break Duration", "Enter short break duration (minutes):", "short_break_duration_minutes", 1, 60)
+    def _edit_long_break_duration(self):
+        self._edit_duration_dialog("Long Break Duration", "Enter long break duration (minutes):", "long_break_duration_minutes", 1, 90)
+    def _edit_eating_break_duration(self):
+        self._edit_duration_dialog("Eating Break Duration", "Enter eating break duration (minutes, 5-120):", "eating_break_duration_minutes", 5, 120)
+    def _edit_pomodoros_for_full_xp(self):
+        self._edit_duration_dialog("XP Goal", "Enter Pomodoros for full XP (1-100):", "pomodoros_for_full_xp", 1, 100)
+
+    # --- MODIFICATION: This is now the primary (and only) _save_settings method ---
     def _save_settings(self):
-        settings = {"focus_duration_minutes": self.focus_duration_minutes, "short_break_duration_minutes": self.short_break_duration_minutes, "long_break_duration_minutes": self.long_break_duration_minutes, "eating_break_duration_minutes": self.eating_break_duration_minutes, "pomodoros_for_full_xp": self.pomodoros_for_full_xp}
+        settings = {
+            "focus_duration_minutes": self.focus_duration_minutes,
+            "short_break_duration_minutes": self.short_break_duration_minutes,
+            "long_break_duration_minutes": self.long_break_duration_minutes,
+            "eating_break_duration_minutes": self.eating_break_duration_minutes,
+            "pomodoros_for_full_xp": self.pomodoros_for_full_xp,
+            # --- MODIFICATION: Added custom_sequence saving ---
+            "custom_sequence": self.custom_sequence
+            # --- END MODIFICATION ---
+        }
         try:
             CONFIG_FILE_PATH.parent.mkdir(parents=True, exist_ok=True)
-            with open(CONFIG_FILE_PATH, "w", encoding='utf-8') as f: json.dump(settings, f, indent=4)
-            print("Settings saved.")
-        except Exception as e: messagebox.showerror("Settings Error", f"Could not save timer settings: {e}", parent=self.root); print(f"Error saving settings: {e}")
+            with open(CONFIG_FILE_PATH, "w", encoding='utf-8') as f:
+                json.dump(settings, f, indent=4)
+            print("Settings saved (including custom sequence).") # Updated print message
+        except Exception as e:
+            messagebox.showerror("Settings Error", f"Could not save timer settings: {e}", parent=self.root if self.root.winfo_exists() else None)
+            print(f"Error saving settings: {e}")
 
-    def _edit_eating_break_duration(self):
-        new_duration = simpledialog.askinteger("Eating Break Duration", "Enter eating break duration (minutes, 5-120):", parent=self.root, minvalue=5, maxvalue=120, initialvalue=self.eating_break_duration_minutes)
-        if new_duration is not None: self.eating_break_duration_minutes = new_duration; self._update_button_labels(); self._save_settings()
-
-    def _edit_pomodoros_for_full_xp(self):
-        new_value = simpledialog.askinteger("XP Goal", "Enter Pomodoros needed for full XP bar (1-100):", parent=self.root, minvalue=1, maxvalue=100, initialvalue=self.pomodoros_for_full_xp)
-        if new_value is not None: self.pomodoros_for_full_xp = new_value; self._save_settings(); self._draw_xp_bar()
-        if self.pomodoro_count >= self.pomodoros_for_full_xp: messagebox.showinfo("XP Goal Met!", "You've already met or exceeded the new XP goal!", parent=self.root)
 
     def _update_button_labels(self):
-        self.start_focus_button.config(text=f"Start Focus ({self.focus_duration_minutes} min)")
-        self.start_short_break_button.config(text=f"Short Break ({self.short_break_duration_minutes} min)")
-        self.start_long_break_button.config(text=f"Long Break ({self.long_break_duration_minutes} min)")
-        self.start_eating_break_button.config(text=f"Eating Break ({self.eating_break_duration_minutes} min)")
+        if hasattr(self, 'start_sequence_button'):
+            self.start_sequence_button.config(text="Start Defined Sequence")
+        if hasattr(self, 'start_short_break_button'):
+            self.start_short_break_button.config(text=f"Manual Short Break ({self.short_break_duration_minutes} min)")
+        if hasattr(self, 'start_long_break_button'):
+             self.start_long_break_button.config(text=f"Manual Long Break ({self.long_break_duration_minutes} min)")
+        if hasattr(self, 'start_eating_break_button'):
+            self.start_eating_break_button.config(text=f"Manual Eating Break ({self.eating_break_duration_minutes} min)")
 
-    def _update_ui_for_timer_state(self): # UPDATED
-        timer_is_on = self.timer_running
-        
-        self.start_focus_button.config(state=tk.DISABLED if timer_is_on else tk.NORMAL)
-        self.start_short_break_button.config(state=tk.DISABLED if timer_is_on else tk.NORMAL)
-        self.start_long_break_button.config(state=tk.DISABLED if timer_is_on else tk.NORMAL)
-        self.start_eating_break_button.config(state=tk.DISABLED if timer_is_on else tk.NORMAL)
-        
-        self._draw_stop_icon(is_enabled=timer_is_on)
-        
-        if timer_is_on:
-            self._draw_pause_play_icon(show_play=self.timer_paused, is_enabled=True)
-        else: # Timer not running
-            self._draw_pause_play_icon(show_play=True, is_enabled=False) # Show play, disabled
+    def _update_ui_for_timer_state(self):
+        timer_is_active = self.timer_running
+        sequence_active_or_starting = self.timer_running and self.current_sequence_index >= 0
+
+        if hasattr(self, 'start_sequence_button'): # Check attribute existence
+            self.start_sequence_button.config(state=tk.DISABLED if timer_is_active else tk.NORMAL)
+
+        manual_button_state = tk.DISABLED if sequence_active_or_starting else tk.NORMAL
+        if not timer_is_active and self.current_sequence_index == -1 :
+             manual_button_state = tk.NORMAL
+
+        if hasattr(self, 'start_short_break_button'): # Check attribute existence
+            self.start_short_break_button.config(state=manual_button_state)
+        if hasattr(self, 'start_long_break_button'): # Check attribute existence
+            self.start_long_break_button.config(state=manual_button_state)
+        if hasattr(self, 'start_eating_break_button'): # Check attribute existence
+            self.start_eating_break_button.config(state=manual_button_state)
+
+        self._draw_stop_icon(is_enabled=timer_is_active)
+        self._draw_pause_play_icon(show_play=self.timer_paused, is_enabled=timer_is_active)
 
         self._update_timer_display()
 
+
+    def _play_sound_async(self, sound_file_path_obj):
+        if not PLAYSOUND_AVAILABLE: return
+        def play():
+            try:
+                sound_file_str = str(sound_file_path_obj)
+                if sound_file_path_obj.exists():
+                    print(f"Playing sound: {sound_file_str}")
+                    playsound(sound_file_str)
+                else:
+                    print(f"Sound file not found: {sound_file_str}")
+            except Exception as e:
+                print(f"Error playing sound '{sound_file_str}': {e}")
+        sound_thread = threading.Thread(target=play, daemon=True)
+        sound_thread.start()
+
     def _handle_natural_session_completion(self):
-        self.timer_paused = False # Reset pause state
+        if not self.timer_running: return
+        self.timer_paused = False 
         session_that_completed = self.current_state
-        if self._timer_id: self.root.after_cancel(self._timer_id); self._timer_id = None
+        completed_break_type_for_message = self.current_break_type
+        
+        # --- Store whether early reload was done for *this specific break that just ended* ---
+        # This is important because self.reload_attempted_early might be set by a tick just before this.
+        early_reload_was_done_for_this_break = self.reload_attempted_early
+        self.reload_attempted_early = False # Reset flag immediately for any future breaks
+        # ---
+
+        if self._timer_id:
+            self.root.after_cancel(self._timer_id)
+            self._timer_id = None
+
+        # Main window de-iconify (lift() and focus_force() should still be commented out)
+        if self.root.winfo_exists():
+            if self.root.state() == 'iconic':
+                self.root.deiconify() 
+            # self.root.lift()          # Stays COMMENTED OUT
+            # self.root.focus_force()   # Stays COMMENTED OUT
+
+        def on_notification_acknowledged():
+            if self.current_sequence_index >= -1 and self.custom_sequence:
+                self._proceed_to_next_in_sequence()
+            else:
+                print("Session ended (notification acknowledged), but not in sequence. Resetting.")
+                self._reset_session_end_actions()
+
+        if hasattr(self, 'notification_window') and self.notification_window and self.notification_window.winfo_exists():
+            try: self.notification_window.destroy() 
+            except tk.TclError: pass
+            finally: self.notification_window = None
+
         if session_that_completed == "Focus":
-            self.pomodoro_count += 1; self._draw_xp_bar()
-            if self.pomodoro_count == self.pomodoros_for_full_xp: messagebox.showinfo("XP Goal Reached!", "Congratulations! You've filled the XP bar!", parent=self.root)
-            if self.blocked_websites: self._unblock_domains(list(self.blocked_websites))
-            messagebox.showinfo("Focus Ended", "Focus session complete! Time for a break.", parent=self.root)
-            self._reset_session_end_actions()
+            # ... (Focus completion logic - unchanged) ...
+            self.pomodoro_count += 1
+            self._draw_xp_bar()
+            if self.pomodoro_count == self.pomodoros_for_full_xp:
+                messagebox.showinfo("XP Goal Reached!", "Congratulations! You've filled the XP bar!", parent=self.root)
+            if self.blocked_websites:
+                self._unblock_domains(list(self.blocked_websites))
+            
+            self.notification_window = RepeatingNotificationWindow(
+                master=self.root, title="Focus Ended",
+                message="Focus session complete!\nPreparing next session in sequence.",
+                sound_file_to_repeat=SOUND_FOCUS_COMPLETE,
+                on_ok_callback=on_notification_acknowledged, app_controller=self)
+
         elif session_that_completed == "Break":
-            messagebox.showinfo("Break Over", f"{self.current_break_type} break is over! Ready for next session?", parent=self.root)
-            self._reset_session_end_actions()
+            print(f"Break '{completed_break_type_for_message}' naturally completed.")
+            
+            if not early_reload_was_done_for_this_break: # If early reload didn't happen
+                next_session_is_focus = False
+                peek_index = self.current_sequence_index + 1                 
+                if self.custom_sequence: 
+                    if 0 <= peek_index < len(self.custom_sequence):
+                        next_session_details = self.custom_sequence[peek_index]
+                        if next_session_details.get('type') == "Focus": 
+                            next_session_is_focus = True
+                else: 
+                    next_session_is_focus = True 
+
+                if next_session_is_focus and self.blocked_websites:
+                    print("Next session will be Focus. Re-blocking websites now and attempting browser reload (standard timing).")
+                    self._block_domains(list(self.blocked_websites))
+                    self.root.after(250, self._simulate_browser_reload) 
+                else: # Print appropriate skip message
+                    if not next_session_is_focus: print(f"Break '{completed_break_type_for_message}' ended. Next session is not Focus. Skipping reload.")
+                    elif not self.blocked_websites: print(f"Break '{completed_break_type_for_message}' ended. No websites in block list. Skipping reload.")
+            else:
+                print("Early reload sequence was already attempted for this break.")
+
+            self.notification_window = RepeatingNotificationWindow(
+                master=self.root, title="Break Over",
+                message=f"{completed_break_type_for_message} break is over!\nPreparing next session in sequence.",
+                sound_file_to_repeat=SOUND_BREAK_COMPLETE,
+                on_ok_callback=on_notification_acknowledged, app_controller=self)
 
     def _draw_stop_icon(self, is_enabled=True):
         self.stop_icon_canvas.delete("all")
-        square_color = STOP_ICON_SQUARE_COLOR_ACTIVE if is_enabled else STOP_ICON_SQUARE_COLOR_DISABLED
-        self.stop_icon_canvas.create_rectangle(STOP_ICON_PADDING, STOP_ICON_PADDING, STOP_ICON_SIZE - STOP_ICON_PADDING, STOP_ICON_SIZE - STOP_ICON_PADDING, fill=square_color, outline=square_color)
+        square_color = STOP_ICON_COLOR_ACTIVE if is_enabled else STOP_ICON_COLOR_DISABLED
+        pad = ICON_PADDING_STOP
+        size = ICON_SIZE
+        self.stop_icon_canvas.create_rectangle(pad, pad, size - pad, size - pad,
+                                               fill=square_color, outline=square_color)
 
     def _on_stop_icon_click(self, event=None):
-        if self.timer_running: self._stop_current_session()
+        if self.timer_running:
+            self._stop_current_session()
 
-    def _draw_pause_play_icon(self, show_play=True, is_enabled=True): # UPDATED
+    def _draw_pause_play_icon(self, show_play=True, is_enabled=True):
         self.pause_play_icon_canvas.delete("all")
-        pad = PAUSE_PLAY_ICON_PADDING
-        size = PAUSE_PLAY_ICON_SIZE
-        
-        if not is_enabled:
-            icon_color = PAUSE_PLAY_ICON_COLOR_DISABLED
-            # Draw Play symbol (triangle) greyed out
+        pad = ICON_PADDING_PLAY_PAUSE
+        size = ICON_SIZE
+        icon_color = PAUSE_PLAY_ICON_COLOR_DISABLED
+        if is_enabled:
+            icon_color = PLAY_ICON_COLOR_ACTIVE if show_play else PAUSE_ICON_COLOR_ACTIVE
+        if show_play:
             points = [pad, pad, pad, size - pad, size - pad, size / 2]
             self.pause_play_icon_canvas.create_polygon(points, fill=icon_color, outline=icon_color)
-        elif show_play:
-            icon_color = PLAY_ICON_COLOR_ACTIVE
-            points = [pad, pad, pad, size - pad, size - pad, size / 2]
-            self.pause_play_icon_canvas.create_polygon(points, fill=icon_color, outline=icon_color)
-        else: # Draw Pause symbol (two vertical bars)
-            icon_color = PAUSE_ICON_COLOR_ACTIVE
-            bar_width = (size - (pad * 2) - pad / 1.5) / 2 # Adjusted for slightly thicker bars and gap
-            gap = pad / 1.5
-            # Left bar
-            self.pause_play_icon_canvas.create_rectangle(pad, pad, pad + bar_width, size - pad, fill=icon_color, outline=icon_color)
-            # Right bar
-            self.pause_play_icon_canvas.create_rectangle(pad + bar_width + gap, pad, pad + bar_width * 2 + gap, size - pad, fill=icon_color, outline=icon_color)
+        else:
+            bar_width_ratio = 0.3
+            total_bar_space = size - (2 * pad)
+            bar_width = total_bar_space * bar_width_ratio
+            gap = total_bar_space * (1 - 2 * bar_width_ratio) / 3
+            if gap < 2 : gap = 2
+            bar_width = (total_bar_space - gap) / 2
+            if bar_width < 1: bar_width = 1
+            x0_left = pad
+            x1_left = pad + bar_width
+            self.pause_play_icon_canvas.create_rectangle(x0_left, pad, x1_left, size - pad,
+                                                         fill=icon_color, outline=icon_color)
+            x0_right = x1_left + gap
+            x1_right = x0_right + bar_width
+            self.pause_play_icon_canvas.create_rectangle(x0_right, pad, x1_right, size - pad,
+                                                         fill=icon_color, outline=icon_color)
 
-    def _on_pause_play_icon_click(self, event=None): # UPDATED
-        if not self.timer_running: return
-
-        if self.timer_paused: # If paused, then play
-            self.timer_paused = False
-            # _update_ui_for_timer_state will redraw the icon
-            self._tick_countdown() # Resume countdown
-            print("Timer Resumed")
-        else: # If playing, then pause
-            self.timer_paused = True
-            if self._timer_id: self.root.after_cancel(self._timer_id)
-            # _update_ui_for_timer_state will redraw the icon
+    def _on_pause_play_icon_click(self, event=None):
+        if not self.timer_running:
+            return
+        self.timer_paused = not self.timer_paused
+        if self.timer_paused:
+            if self._timer_id:
+                self.root.after_cancel(self._timer_id)
             print("Timer Paused")
-        self._update_ui_for_timer_state() # Crucial to update icon and status label
+        else:
+            print("Timer Resumed")
+            self._tick_countdown()
+        self._update_ui_for_timer_state()
 
-
-    def _start_session_common(self, state_name, break_type_name, duration_minutes): # NEW helper
-        if self.timer_running: messagebox.showwarning("Timer Active", "A session is already in progress.", parent=self.root); return False
-        
-        if state_name == "Focus" and not self.blocked_websites and \
-           not messagebox.askyesno("No Websites Blocked", "Your block list is empty. Start focus anyway?", parent=self.root):
+    def _start_session_common(self, state_name, break_type_name, duration_minutes):
+        if self.timer_running:
+            messagebox.showwarning("Timer Active", "A session is already in progress.", parent=self.root)
             return False
-
+        if state_name == "Focus" and not self.blocked_websites:
+            if not messagebox.askyesno("No Websites Blocked", "Your block list is empty. Start focus session anyway?", parent=self.root):
+                return False
         self.timer_running = True
         self.timer_paused = False
         self.current_state = state_name
-        self.current_break_type = break_type_name
+        self.current_break_type = break_type_name if state_name == "Break" else ""
+
+        if state_name == "Break":
+            self.reload_attempted_early = False
+        
         self.total_seconds_for_session = duration_minutes * 60
         self.remaining_seconds = self.total_seconds_for_session
-        
         if state_name == "Focus" and self.blocked_websites:
             self._block_domains(list(self.blocked_websites))
-        
         self._update_ui_for_timer_state()
         self._tick_countdown()
         return True
 
-    def _start_focus_session(self):
+    def _start_focus_session(self): # This method might become obsolete or used for non-sequence focus
+        if not self._confirm_interrupt_sequence(): return # If starting focus manually, check sequence
         self._start_session_common("Focus", "", self.focus_duration_minutes)
-    def _start_short_break_session(self):
-        self._start_session_common("Break", "Short", self.short_break_duration_minutes)
-    def _start_long_break_session(self):
-        self._start_session_common("Break", "Long", self.long_break_duration_minutes)
-    def _start_eating_break_session(self):
-        self._start_session_common("Break", "Eating", self.eating_break_duration_minutes)
+
+
+    def _start_automatic_break_session(self):
+        print("Starting automatic short break.")
+        self.timer_running = False
+        self.current_state = "Idle"
+        if not self._start_session_common("Break", "Short", self.short_break_duration_minutes):
+            self._reset_session_end_actions()
+
 
     def _stop_current_session(self):
-        if not self.timer_running: return
+        if not self.timer_running:
+            return
+        if hasattr(self, 'notification_window') and self.notification_window and self.notification_window.winfo_exists():
+            try:
+                self.notification_window._stop_repeating_sound()
+                self.notification_window.destroy()
+            except tk.TclError:
+                pass # May already be in process of destroying
+            finally:
+                self.notification_window = None
+
         was_focus_session = (self.current_state == "Focus")
         stopped_break_type = self.current_break_type if self.current_state == "Break" else ""
-        
         self.timer_running = False
-        self.timer_paused = False # Reset pause state
-        if self._timer_id: self.root.after_cancel(self._timer_id); self._timer_id = None
-        
-        self.current_state = "Idle"; self.current_break_type = ""
-        self.remaining_seconds = 0; self.total_seconds_for_session = 0
-        
-        if was_focus_session and self.blocked_websites: self._unblock_domains(list(self.blocked_websites))
-        
+        self.timer_paused = False
+        if self._timer_id:
+            self.root.after_cancel(self._timer_id)
+            self._timer_id = None
+        # --- MODIFICATION: Reset sequence index when a session is manually stopped ---
+        if self.current_sequence_index != -1: # If a sequence was active
+            print(f"Sequence interrupted by stopping the session. Current index was: {self.current_sequence_index}")
+            self.current_sequence_index = -1 
+        # --- END MODIFICATION ---
+        self.current_state = "Idle"
+        self.current_break_type = ""
+        self.remaining_seconds = 0
+        self.total_seconds_for_session = 0
+        if was_focus_session and self.blocked_websites:
+            self._unblock_domains(list(self.blocked_websites))
         log_message = "Focus session stopped." if was_focus_session else f"{stopped_break_type} break stopped."
         print(log_message)
         self._update_ui_for_timer_state()
 
+
     def _tick_countdown(self):
-        if self.timer_paused: return # If paused, do nothing this tick
-        if not self.timer_running or self.remaining_seconds < 0:
-            if self.current_state != "Idle": self._reset_session_end_actions()
+        if self.timer_paused:
             return
+        if not self.timer_running or self.remaining_seconds < 0:
+            if self.current_state != "Idle":
+                self._reset_session_end_actions()
+            return
+        
+        if self.current_state == "Break" and self.remaining_seconds == 3 and \
+           not self.reload_attempted_early and self.blocked_websites:
+            
+            next_session_is_focus = False
+            peek_index = self.current_sequence_index + 1
+            if self.custom_sequence:
+                if 0 <= peek_index < len(self.custom_sequence):
+                    next_session_details = self.custom_sequence[peek_index]
+                    if next_session_details.get('type') == "Focus":
+                        next_session_is_focus = True
+            else: # No custom sequence, default implies Focus after break
+                next_session_is_focus = True
+            
+            if next_session_is_focus:
+                print("Approaching end of break (3s remaining). Pre-emptively blocking sites and attempting reload.")
+                self._block_domains(list(self.blocked_websites))
+                # Call reload directly. The focus issue for pyautogui still remains paramount.
+                # A tiny delay *might* help the OS register hosts file change before pyautogui acts.
+                # This call is blocking for pyautogui, then _tick_countdown continues.
+                # Consider if a self.root.after(50, self._simulate_browser_reload) is better
+                # if _simulate_browser_reload takes too long and makes the 5-second tick inaccurate.
+                # For now, direct call:
+                self._simulate_browser_reload() 
+                self.reload_attempted_early = True # Mark that we've done this for the current break
         self._update_timer_display()
-        if self.remaining_seconds == 0: self._handle_natural_session_completion()
-        else: self.remaining_seconds -= 1; self._timer_id = self.root.after(1000, self._tick_countdown)
+        if self.remaining_seconds == 0:
+            self._handle_natural_session_completion()
+        else:
+            self.remaining_seconds -= 1
+            self._timer_id = self.root.after(1000, self._tick_countdown)
+
 
     def _reset_session_end_actions(self):
         was_focus_before_idle = (self.current_state == "Focus")
-        self.timer_running = False; self.timer_paused = False
-        self.current_state = "Idle"; self.current_break_type = ""
-        self.remaining_seconds = 0; self.total_seconds_for_session = 0
-        if self._timer_id: self.root.after_cancel(self._timer_id); self._timer_id = None
-        if was_focus_before_idle and self.blocked_websites: self._unblock_domains(list(self.blocked_websites))
+        self.timer_running = False
+        self.timer_paused = False
+        self.current_state = "Idle"
+        self.current_break_type = ""
+        self.remaining_seconds = 0
+        self.total_seconds_for_session = 0
+        if self._timer_id:
+            self.root.after_cancel(self._timer_id)
+            self._timer_id = None
+        if was_focus_before_idle and self.blocked_websites:
+            self._unblock_domains(list(self.blocked_websites))
+        # --- MODIFICATION: Do not reset sequence index here, sequence completion handles it ---
+        # if self.current_sequence_index != -1:
+        #    print(f"Session ended. Sequence index remains: {self.current_sequence_index} until sequence completes or is stopped.")
+        # --- END MODIFICATION ---
         self._update_ui_for_timer_state()
+
+
+    def _reset_pomodoro_counter(self):
+        if self.timer_running:
+            messagebox.showwarning("Session Active", "Cannot reset XP during an active session.", parent=self.root)
+            return
+        if messagebox.askyesno("Reset XP", "Are you sure you want to reset the Pomodoro XP counter?", parent=self.root):
+            self.pomodoro_count = 0
+            self._draw_xp_bar()
 
     def on_closing(self):
         self._save_settings()
-        if self.timer_running:
-            if self.current_state == "Focus" and self.blocked_websites: self._unblock_domains(list(self.blocked_websites))
-            self.timer_running = False; self.timer_paused = False
-            if self._timer_id: self.root.after_cancel(self._timer_id); self._timer_id = None
+        if self.timer_running and self.current_state == "Focus" and self.blocked_websites:
+            print("Unblocking sites as focus session was active on close.")
+            self._unblock_domains(list(self.blocked_websites))
+        self.timer_running = False
+        self.timer_paused = False
+        if self._timer_id:
+            self.root.after_cancel(self._timer_id)
+            self._timer_id = None
         print("Application closing.")
-        if self.block_list_manager_window and self.block_list_manager_window.winfo_exists(): self.block_list_manager_window.destroy()
+        if self.block_list_manager_window and self.block_list_manager_window.winfo_exists():
+            self.block_list_manager_window.destroy()
         self.root.destroy()
 
-    # --- Unchanged Methods (BlockList, Hosts, Admin, etc.) ---
+    def _is_admin(self):
+        try: return os.geteuid() == 0
+        except AttributeError: return False
+
     def _open_block_list_manager(self):
         if self.block_list_manager_window is None or not self.block_list_manager_window.winfo_exists():
             self.block_list_manager_window = BlockListManagerWindow(self.root, self)
             self.block_list_manager_window.protocol("WM_DELETE_WINDOW", self._on_block_list_manager_close)
-        else: self.block_list_manager_window.lift(); self.block_list_manager_window.focus_force()
+        else:
+            self.block_list_manager_window.lift()
+            self.block_list_manager_window.focus_set()
+
     def _on_block_list_manager_close(self):
-        if self.block_list_manager_window: self.block_list_manager_window.destroy(); self.block_list_manager_window = None
+        if self.block_list_manager_window:
+            self.block_list_manager_window.destroy()
+            self.block_list_manager_window = None
+
     def add_domain_to_blocklist_core(self, normalized_website):
-        if normalized_website in self.blocked_websites: return False, f"{normalized_website} is already in the block list."
-        self.blocked_websites.add(normalized_website); self._save_block_list_to_file()
+        if normalized_website in self.blocked_websites:
+            return False, f"{normalized_website} is already in the block list."
+        self.blocked_websites.add(normalized_website)
+        self._save_block_list_to_file()
         return True, f"{normalized_website} added to block list."
+
     def remove_domain_from_blocklist_core(self, selected_website):
-        if selected_website not in self.blocked_websites: return False, f"{selected_website} not found in the block list."
-        self._unblock_domains([selected_website]); self.blocked_websites.remove(selected_website); self._save_block_list_to_file()
+        if selected_website not in self.blocked_websites:
+            return False, f"{selected_website} not found in the block list."
+        self._unblock_domains([selected_website])
+        self.blocked_websites.remove(selected_website)
+        self._save_block_list_to_file()
         return True, f"{selected_website} has been unblocked and removed from the list."
-    def _edit_focus_duration(self):
-        new_duration = simpledialog.askinteger("Focus Duration", "Enter focus duration (minutes):", parent=self.root, minvalue=1, maxvalue=180, initialvalue=self.focus_duration_minutes)
-        if new_duration is not None: self.focus_duration_minutes = new_duration; self._update_button_labels(); self._save_settings()
-    def _edit_short_break_duration(self):
-        new_duration = simpledialog.askinteger("Short Break Duration", "Enter short break duration (minutes):", parent=self.root, minvalue=1, maxvalue=60, initialvalue=self.short_break_duration_minutes)
-        if new_duration is not None: self.short_break_duration_minutes = new_duration; self._update_button_labels(); self._save_settings()
-    def _edit_long_break_duration(self):
-        new_duration = simpledialog.askinteger("Long Break Duration", "Enter long break duration (minutes):", parent=self.root, minvalue=1, maxvalue=90, initialvalue=self.long_break_duration_minutes)
-        if new_duration is not None: self.long_break_duration_minutes = new_duration; self._update_button_labels(); self._save_settings()
+
     def _load_block_list_from_file(self):
         self.blocked_websites.clear()
         if BLOCK_LIST_FILE_PATH.exists():
             try:
                 with open(BLOCK_LIST_FILE_PATH, "r", encoding='utf-8') as f:
-                    for line in f: self.blocked_websites.add(line.strip()) if line.strip() else None
-                print(f"Loaded {len(self.blocked_websites)} websites from block list.")
-            except Exception as e: messagebox.showerror("File Error", f"Could not load block list: {e}", parent=self.root); print(f"Error loading block list: {e}")
-        else: print("Block list file not found. Starting empty.")
+                    for line in f:
+                        site = line.strip()
+                        if site: self.blocked_websites.add(site)
+            except Exception as e:
+                messagebox.showwarning("Load Error", f"Could not read block list file:\n{BLOCK_LIST_FILE_PATH}\n{e}", parent=self.root)
+
     def _save_block_list_to_file(self):
         try:
             BLOCK_LIST_FILE_PATH.parent.mkdir(parents=True, exist_ok=True)
             with open(BLOCK_LIST_FILE_PATH, "w", encoding='utf-8') as f:
-                for website in sorted(list(self.blocked_websites)): f.write(website + "\n")
-            print(f"Saved {len(self.blocked_websites)} websites to block list.")
-        except Exception as e: messagebox.showerror("File Error", f"Could not save block list: {e}", parent=self.root); print(f"Error saving block list: {e}")
-    def _is_admin(self):
-        try: return os.geteuid() == 0
-        except AttributeError: return False
+                for site in sorted(list(self.blocked_websites)):
+                    f.write(site + "\n")
+        except Exception as e:
+            messagebox.showerror("Save Error", f"Could not write to block list file:\n{BLOCK_LIST_FILE_PATH}\n{e}", parent=self.root)
+
+    def _get_domains_to_manage(self, domain):
+        domain_lower = domain.lower()
+        domains = {domain_lower}
+        if domain_lower.startswith("www."):
+            domains.add(domain_lower[4:])
+        else:
+            domains.add("www." + domain_lower)
+        return domains
+
     def _read_hosts_file(self):
         try:
-            with open(HOSTS_FILE_PATH, "r", encoding='utf-8') as f: return f.readlines()
-        except Exception as e: messagebox.showerror("Error", f"Could not read {HOSTS_FILE_PATH}: {e}", parent=self.root); return None
-    def _write_hosts_file(self, lines):
+            with open(HOSTS_FILE_PATH, "r", encoding='utf-8') as f:
+                return f.readlines()
+        except FileNotFoundError:
+            messagebox.showerror("Hosts File Error", f"{HOSTS_FILE_PATH} not found.", parent=self.root)
+            return None
+        except Exception as e:
+            messagebox.showerror("Hosts File Error", f"Could not read {HOSTS_FILE_PATH}: {e}", parent=self.root)
+            return None
+
+    def _write_hosts_file(self, lines_to_write):
         try:
-            processed_lines = [line.strip() + "\n" for line in lines if line.strip()]
-            if processed_lines and not processed_lines[-1].endswith("\n"): processed_lines[-1] += "\n"
-            with open(HOSTS_FILE_PATH, "w", encoding='utf-8') as f: f.writelines(processed_lines)
+            processed_lines = []
+            if lines_to_write:
+                for line_content in lines_to_write:
+                    stripped_line = line_content.strip()
+                    if stripped_line:
+                        processed_lines.append(stripped_line + "\n")
+            with open(HOSTS_FILE_PATH, "w", encoding='utf-8') as f:
+                f.writelines(processed_lines)
             return True
-        except Exception as e: messagebox.showerror("Error", f"Could not write to {HOSTS_FILE_PATH}: {e}", parent=self.root); return False
-    def _get_domains_to_manage(self, domain):
-        d = domain.lower(); return {d, f"www.{d}"} if not d.startswith("www.") else {d, d[4:]}
+        except PermissionError:
+            messagebox.showerror("Permission Error", f"Could not write to {HOSTS_FILE_PATH}. Run with sudo.", parent=self.root)
+            return False
+        except Exception as e:
+            messagebox.showerror("Hosts File Error", f"Could not write to {HOSTS_FILE_PATH}: {e}", parent=self.root)
+            return False
+
     def _block_domains(self, domains_to_block_list):
         if not domains_to_block_list: return
-        original_lines = self._read_hosts_file();
-        if original_lines is None: return
-        variants_to_block = set().union(*(self._get_domains_to_manage(d) for d in domains_to_block_list))
-        filtered_lines, modified = [], False
-        for line in original_lines:
-            parts = line.strip().split(None, 2)
-            if not (len(parts) >= 2 and parts[0] == REDIRECT_IP and parts[1] in variants_to_block):
-                filtered_lines.append(line)
-            else: modified = True
-        new_entries = [f"{REDIRECT_IP}\t{md}\t{POMODORO_COMMENT}\n" for md in sorted(list(variants_to_block))]
-        if modified or (new_entries and not all(entry in original_lines for entry in new_entries)): # Check if actual change will happen
-            if self._write_hosts_file(filtered_lines + new_entries): print(f"Hosts blocked: {domains_to_block_list}")
+        original_hosts_lines = self._read_hosts_file()
+        if original_hosts_lines is None: return
+        all_managed_variants_to_block = set()
+        for domain_base in domains_to_block_list:
+            all_managed_variants_to_block.update(self._get_domains_to_manage(domain_base))
+        filtered_lines = []
+        modified = False
+        for line in original_hosts_lines:
+            stripped_line = line.strip()
+            parts = stripped_line.split(None, 2)
+            should_remove_this_line = False
+            if len(parts) >= 2 and parts[0] == REDIRECT_IP:
+                if parts[1] in all_managed_variants_to_block:
+                    should_remove_this_line = True
+                    modified = True
+            if not should_remove_this_line:
+                filtered_lines.append(line.rstrip('\n') + '\n')
+        new_blocking_entries_to_add = []
+        for managed_domain in sorted(list(all_managed_variants_to_block)):
+            new_blocking_entries_to_add.append(f"{REDIRECT_IP}\t{managed_domain}\t{POMODORO_COMMENT}\n")
+            modified = True
+        final_lines = filtered_lines + new_blocking_entries_to_add
+        if modified:
+            if self._write_hosts_file(final_lines):
+                print(f"Hosts file updated to BLOCK: {', '.join(domains_to_block_list)}")
+        else:
+             print(f"No changes needed to hosts file for BLOCKING: {', '.join(domains_to_block_list)}")
+
+    def _confirm_interrupt_sequence(self):
+        if self.timer_running and self.current_sequence_index >= 0:
+            if messagebox.askyesno("Interrupt Sequence?",
+                                   "A Pomodoro sequence is currently active. Starting a manual break will stop the current sequence. Continue?",
+                                   parent=self.root):
+                self._stop_current_session() 
+                # self.current_sequence_index = -1 # _stop_current_session now handles this
+                return True
+            else:
+                return False
+        return True
+
+    def _start_short_break_session(self):
+        if not self._confirm_interrupt_sequence(): return
+        self._start_session_common("Break", "Short", self.short_break_duration_minutes)
+
+    def _start_long_break_session(self):
+        if not self._confirm_interrupt_sequence(): return
+        self._start_session_common("Break", "Long", self.long_break_duration_minutes)
+
+    def _start_eating_break_session(self):
+        if not self._confirm_interrupt_sequence(): return
+        self._start_session_common("Break", "Eating", self.eating_break_duration_minutes)
+
     def _unblock_domains(self, domains_to_unblock_list):
         if not domains_to_unblock_list: return
-        original_lines = self._read_hosts_file()
-        if original_lines is None: return
-        variants_to_unblock = set().union(*(self._get_domains_to_manage(d) for d in domains_to_unblock_list))
-        new_lines, modified = [], False
-        for line in original_lines:
-            parts = line.strip().split(None, 2)
-            if len(parts) >= 2 and parts[0] == REDIRECT_IP and parts[1] in variants_to_unblock:
-                modified = True; continue
-            new_lines.append(line)
-        if modified and self._write_hosts_file(new_lines): print(f"Hosts unblocked: {domains_to_unblock_list}")
-    def _ensure_all_blocked_sites_are_unblocked_on_startup(self):
-        if BLOCK_LIST_FILE_PATH.exists():
-            sites = []
-            try:
-                with open(BLOCK_LIST_FILE_PATH, "r", encoding='utf-8') as f: sites = [l.strip() for l in f if l.strip()]
-            except Exception as e: print(f"Cleanup read error: {e}"); return
-            if sites: print(f"Startup unblock: {sites}"); self._unblock_domains(sites)
+        original_hosts_lines = self._read_hosts_file()
+        if original_hosts_lines is None: return
+        all_managed_variants_to_unblock = set()
+        for domain_base in domains_to_unblock_list:
+            all_managed_variants_to_unblock.update(self._get_domains_to_manage(domain_base))
+        resulting_lines = []
+        modified = False
+        for line in original_hosts_lines:
+            keep_this_line = True
+            stripped_line = line.strip()
+            parts = stripped_line.split(None, 2)
+            if len(parts) >= 2 and parts[0] == REDIRECT_IP:
+                if parts[1] in all_managed_variants_to_unblock:
+                    keep_this_line = False
+                    modified = True
+            if keep_this_line:
+                resulting_lines.append(line.rstrip('\n') + '\n')
+        if modified:
+            if self._write_hosts_file(resulting_lines):
+                print(f"Hosts file updated to UNBLOCK: {', '.join(domains_to_unblock_list)}")
+        else:
+            print(f"No unblocking changes needed in hosts file for: {', '.join(domains_to_unblock_list)}")
 
+    def _ensure_all_blocked_sites_are_unblocked_on_startup(self):
+        if self.blocked_websites:
+            print(f"Ensuring sites from app's list are unblocked on startup: {list(self.blocked_websites)}")
+            self._unblock_domains(list(self.blocked_websites))
+
+# +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+# Main Execution
+# +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 if __name__ == "__main__":
     main_root = tk.Tk()
-    is_admin_check = False
-    try: is_admin_check = (os.geteuid() == 0)
-    except AttributeError: is_admin_check = False; print("Non-Unix system or euid check not available.")
 
-    if not is_admin_check and os.name != 'nt':
-        try: messagebox.showerror("Admin Privileges Required", "This application must be run with sudo/admin privileges.")
-        except tk.TclError: print("Error: Admin Privileges Required.", file=sys.stderr)
-        main_root.destroy(); sys.exit(1)
-    
+    if PILLOW_AVAILABLE:
+        try:
+            if APP_ICON_PATH.exists():
+                pil_img = Image.open(APP_ICON_PATH)
+                icon_image = ImageTk.PhotoImage(pil_img)
+                main_root.iconphoto(True, icon_image)
+                print(f"Custom icon loaded from: {APP_ICON_PATH}")
+            else:
+                print(f"Warning: Custom icon file not found at {APP_ICON_PATH}. Using default icon.")
+        except Exception as e:
+            print(f"Error loading custom icon with Pillow: {e}. Using default icon.")
+    else:
+        print("Pillow not found. Custom icon setting skipped (non-Windows, no .ico fallback). Using default icon.")
+
+    is_admin_check = False
+    try:
+        is_admin_check = (os.geteuid() == 0)
+    except AttributeError:
+        is_admin_check = False
+    if not is_admin_check and sys.platform != "win32":
+        try:
+            messagebox.showerror("Admin Privileges Required", "This application must be run with sudo/administrator privileges to modify the hosts file.")
+        except tk.TclError:
+            print("CRITICAL ERROR: Admin Privileges Required. Please run with sudo or as Administrator.", file=sys.stderr)
+        main_root.destroy()
+        sys.exit(1)
+    try:
+        SOUND_DIR.mkdir(parents=True, exist_ok=True)
+        print(f"Sound directory ensured at: {SOUND_DIR}")
+        if not SOUND_FOCUS_COMPLETE.exists() or not SOUND_BREAK_COMPLETE.exists():
+            print(f"Reminder: Place sound files ('{SOUND_FOCUS_COMPLETE.name}', '{SOUND_BREAK_COMPLETE.name}') in '{SOUND_DIR}' for audio notifications.")
+    except Exception as e:
+        print(f"Could not create sound directory '{SOUND_DIR}': {e}")
+
     app = PomodoroWebsiteBlocker(main_root)
     if hasattr(app, 'root') and app.root.winfo_exists():
-        main_root.focus_force(); main_root.protocol("WM_DELETE_WINDOW", app.on_closing); main_root.mainloop()
+        main_root.focus_force()
+        main_root.protocol("WM_DELETE_WINDOW", app.on_closing)
+        main_root.mainloop()
     else:
-        print("Application could not start properly.");
-        if main_root.winfo_exists(): main_root.destroy()
+        print("Application could not complete initialization. Exiting.")
