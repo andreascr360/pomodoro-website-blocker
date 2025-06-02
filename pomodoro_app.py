@@ -38,6 +38,19 @@ SOUND_DIR = SCRIPT_DIR / "sound" # Centralized sound directory
 SCRIPT_DIR = Path(__file__).parent.resolve() # For robust asset paths
 APP_ICON_PATH = SCRIPT_DIR / "pom.png"  # Assuming your icon is named app_icon.png and is in the same directory
 
+# --- ASCII Art Streak Feature ---
+ASCII_ART_PIECES = [
+    {"id": "heart", "name": "Simple Heart", "art_string": "<3", "description": "A token of love. (2-day streak)"},
+    {"id": "smiley", "name": "Smiley Face", "art_string": "@_@", "description": "A classic smiley. (3-day streak)"},
+    {"id": "star", "name": "Little Star", "art_string": "*-*", "description": "Shine bright! (3-day streak)"},
+    {"id": "cat", "name": "Curious Cat", "art_string": "=^_^=", "description": "Meow! (5-day streak)"},
+    # Add more art pieces here, perhaps with increasing difficulty (length)
+]
+
+def get_symbols_from_art(art_string):
+    """Helper function to get individual symbols from an art string."""
+    return list(art_string)
+
 # Network
 REDIRECT_IP = "127.0.0.1"
 POMODORO_COMMENT = "# Added by PomodoroBlocker"
@@ -168,10 +181,62 @@ class BlockListManagerWindow(tk.Toplevel):
         else:
             messagebox.showerror("Error", "Could not unblock selected website.", parent=self)
 
+class AchievementsWindow(tk.Toplevel):
+    def __init__(self, master, app_controller):
+        super().__init__(master)
+        self.app_controller = app_controller
+        self.title("Unlocked Art Achievements")
+        self.geometry("400x500")
+        self.transient(master)
+        self.grab_set()
+
+        main_frame = ttk.Frame(self, padding="10")
+        main_frame.pack(expand=True, fill=tk.BOTH)
+
+        # Using a Text widget for better display of multi-line ASCII art
+        self.text_area = tk.Text(main_frame, wrap=tk.WORD, height=20, width=50, relief=tk.SUNKEN, borderwidth=1)
+        self.text_area.pack(pady=5, fill=tk.BOTH, expand=True)
+
+        scrollbar = ttk.Scrollbar(main_frame, command=self.text_area.yview)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y, before=self.text_area) # position before text_area in packing order for right side
+        self.text_area.config(yscrollcommand=scrollbar.set)
+
+
+        self._populate_achievements()
+
+        close_button = ttk.Button(main_frame, text="Close", command=self.destroy)
+        close_button.pack(pady=10)
+
+        self.protocol("WM_DELETE_WINDOW", self.destroy)
+
+    def _populate_achievements(self):
+        self.text_area.config(state=tk.NORMAL) # Enable editing to insert
+        self.text_area.delete('1.0', tk.END) # Clear previous content
+
+        if not self.app_controller.unlocked_achievements:
+            self.text_area.insert(tk.END, "No art pieces unlocked yet. Keep up the streak!\n")
+        else:
+            for art_id in self.app_controller.unlocked_achievements:
+                art_def = next((art for art in self.app_controller.ascii_art_definitions if art["id"] == art_id), None)
+                if art_def:
+                    self.text_area.insert(tk.END, f"--- {art_def['name']} ---\n", ("title",))
+                    self.text_area.insert(tk.END, f"{art_def['art_string']}\n\n", ("art",))
+                    self.text_area.insert(tk.END, f"({art_def['description']})\n")
+                    self.text_area.insert(tk.END, "------------------------------------\n\n")
+
+        self.text_area.tag_configure("title", font=("Helvetica", 14, "bold"), justify=tk.CENTER)
+        self.text_area.tag_configure("art", font=("Courier", 12, "bold"), justify=tk.CENTER, spacing1=5, spacing3=5) # Add spacing around art
+        self.text_area.config(state=tk.DISABLED) # Make read-only
+
 # +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 # RepeatingNotificationWindow Class
 # +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 class RepeatingNotificationWindow(tk.Toplevel):
+
+    def _on_ok_event_handler(self, event=None):
+        """Handles the Enter key press event by calling the _on_ok method."""
+        self._on_ok()
+
     def __init__(self, master, title, message, sound_file_to_repeat, on_ok_callback, app_controller):
         super().__init__(master)
         self.master_window = master
@@ -185,9 +250,9 @@ class RepeatingNotificationWindow(tk.Toplevel):
         self.sound_file_to_repeat = sound_file_to_repeat
         self.on_ok_callback = on_ok_callback
         
-        self._is_destroyed = False # Flag to prevent operations after destroy
-        self._repetition_active = True # Controls the sound repetition loop
-        self._after_id_pause = None  # Stores ID for the 5-second pause timer
+        self._is_destroyed = False 
+        self._repetition_active = True 
+        self._after_id_pause = None  
 
         self.geometry("350x150") 
         main_frame = ttk.Frame(self, padding="20")
@@ -201,6 +266,9 @@ class RepeatingNotificationWindow(tk.Toplevel):
 
         self.protocol("WM_DELETE_WINDOW", self._on_close)
         
+        # Add this line to bind the Enter key:
+        self.bind("<Return>", self._on_ok_event_handler)
+        
         self.update_idletasks() 
         master_x = master.winfo_x()
         master_y = master.winfo_y()
@@ -212,7 +280,7 @@ class RepeatingNotificationWindow(tk.Toplevel):
         y = master_y + (master_height // 2) - (win_height // 2)
         self.geometry(f'+{x}+{y}')
         
-        self._play_sound_and_initiate_next_cycle() # Start the cycle
+        self._play_sound_and_initiate_next_cycle()
 
     def _play_sound_and_initiate_next_cycle(self): # <--- THIS METHOD WAS MISSING/INCORRECT
         if not self._repetition_active or self._is_destroyed:
@@ -265,87 +333,125 @@ class SequenceEditorWindow(tk.Toplevel):
     def __init__(self, master, app_controller):
         super().__init__(master)
         self.app_controller = app_controller
-        self.title("Edit Pomodoro Sequence")
-        self.geometry("550x550") # Adjusted size
+        self.title("Edit Pomodoro Sequence & Durations")
+        # Potentially increase height slightly more if needed, e.g., 550x680
+        self.geometry("550x680") # Adjusted height for the new label
         self.transient(master)
         self.grab_set()
 
-        # Make a copy of the current sequence to edit
         self.editable_sequence = list(self.app_controller.custom_sequence)
         self.session_types = ["Focus", "Short Break", "Long Break", "Eating Break"]
-
         self.base_time = datetime.datetime.now()
 
         # --- UI Elements ---
-        # Instructions
-        instruction_label = ttk.Label(self, text="Define your Pomodoro sequence. Use buttons to add, remove, or reorder sessions.")
+        instruction_label = ttk.Label(self, text="Define sequence and session durations.")
         instruction_label.grid(row=0, column=0, columnspan=3, padx=10, pady=10, sticky="w")
         
-        # Current Sequence Listbox
         listbox_frame = ttk.LabelFrame(self, text="Current Sequence")
         listbox_frame.grid(row=1, column=0, columnspan=3, padx=10, pady=5, sticky="nsew")
-        listbox_frame.grid_columnconfigure(0, weight=1)
-        listbox_frame.grid_rowconfigure(0, weight=1)
-
-        self.sequence_listbox = tk.Listbox(listbox_frame, selectmode=tk.SINGLE, height=10)
+        # ... (rest of listbox_frame setup as before, e.g., self.sequence_listbox) ...
+        self.sequence_listbox = tk.Listbox(listbox_frame, selectmode=tk.SINGLE, height=8)
         self.sequence_listbox.grid(row=0, column=0, sticky="nsew")
         listbox_scrollbar = ttk.Scrollbar(listbox_frame, orient=tk.VERTICAL, command=self.sequence_listbox.yview)
         self.sequence_listbox.configure(yscrollcommand=listbox_scrollbar.set)
         listbox_scrollbar.grid(row=0, column=1, sticky="ns")
-        self.sequence_listbox.bind("<Return>", self._rename_selected_session_dialog) # Bind Enter key
+        self.sequence_listbox.bind("<Return>", self._rename_selected_session_dialog)
 
-        # Add Session Buttons Frame
-        add_buttons_frame = ttk.LabelFrame(self, text="Add Session Type")
-        # MODIFICATION: Ensure add_buttons_frame spans across available columns if others do, or is wide enough
-        add_buttons_frame.grid(row=2, column=0, columnspan=3, padx=10, pady=5, sticky="ew") # Ensure it spans like listbox
-        
-        # Explicit 2x2 grid for 4 buttons
+        # --- NEW: Total Sequence Time Label ---
+        self.total_sequence_time_label = ttk.Label(self, text="Total Time: Calculating...", font=("Helvetica", 10, "italic"))
+        self.total_sequence_time_label.grid(row=2, column=0, columnspan=3, padx=10, pady=(5, 0), sticky="w")
+        # --- End NEW Total Sequence Time Label ---
+
+        add_buttons_frame = ttk.LabelFrame(self, text="Add Session Type to Sequence")
+        add_buttons_frame.grid(row=3, column=0, columnspan=3, padx=10, pady=5, sticky="ew") # Changed row to 3
+        # ... (rest of add_buttons_frame setup as before) ...
         button_configs = [
             {"text": f"Add {self.session_types[0]}", "command": lambda: self._add_session_type(self.session_types[0]), "row": 0, "col": 0},
             {"text": f"Add {self.session_types[1]}", "command": lambda: self._add_session_type(self.session_types[1]), "row": 0, "col": 1},
             {"text": f"Add {self.session_types[2]}", "command": lambda: self._add_session_type(self.session_types[2]), "row": 1, "col": 0},
             {"text": f"Add {self.session_types[3]}", "command": lambda: self._add_session_type(self.session_types[3]), "row": 1, "col": 1},
         ]
-
         for i in range(2): 
             add_buttons_frame.grid_columnconfigure(i, weight=1)
-
         for config in button_configs:
             btn = ttk.Button(add_buttons_frame, text=config["text"], command=config["command"])
             btn.grid(row=config["row"], column=config["col"], padx=5, pady=5, sticky="ew")
 
 
-        # Modify Sequence Buttons Frame
         modify_buttons_frame = ttk.Frame(self)
-        modify_buttons_frame.grid(row=3, column=0, padx=10, pady=5, sticky="ew")
-
+        modify_buttons_frame.grid(row=4, column=0, columnspan=3, padx=10, pady=5, sticky="ew") # Changed row to 4
+        # ... (rest of modify_buttons_frame setup as before) ...
         self.remove_button = ttk.Button(modify_buttons_frame, text="Remove Selected", command=self._remove_selected_session)
         self.remove_button.pack(side=tk.LEFT, padx=5, pady=5, expand=True, fill=tk.X)
-        
         self.move_up_button = ttk.Button(modify_buttons_frame, text="Move Up", command=self._move_selected_session_up)
         self.move_up_button.pack(side=tk.LEFT, padx=5, pady=5, expand=True, fill=tk.X)
-
         self.move_down_button = ttk.Button(modify_buttons_frame, text="Move Down", command=self._move_selected_session_down)
         self.move_down_button.pack(side=tk.LEFT, padx=5, pady=5, expand=True, fill=tk.X)
 
-        # Action Buttons (Save, Cancel) Frame
+
+        durations_frame = ttk.LabelFrame(self, text="Edit Session Durations (minutes)")
+        durations_frame.grid(row=5, column=0, columnspan=3, padx=10, pady=10, sticky="ew") # Changed row to 5
+        # ... (rest of durations_frame setup as before, including labels and buttons) ...
+        durations_frame.grid_columnconfigure(0, weight=1) 
+        durations_frame.grid_columnconfigure(1, weight=0) 
+        self.focus_duration_label = ttk.Label(durations_frame, text="")
+        self.focus_duration_label.grid(row=0, column=0, padx=5, pady=2, sticky="w")
+        ttk.Button(durations_frame, text="Edit Focus", command=self._edit_focus_duration_in_editor).grid(row=0, column=1, padx=5, pady=2, sticky="e")
+        self.short_break_duration_label = ttk.Label(durations_frame, text="")
+        self.short_break_duration_label.grid(row=1, column=0, padx=5, pady=2, sticky="w")
+        ttk.Button(durations_frame, text="Edit Short Break", command=self._edit_short_break_duration_in_editor).grid(row=1, column=1, padx=5, pady=2, sticky="e")
+        self.long_break_duration_label = ttk.Label(durations_frame, text="")
+        self.long_break_duration_label.grid(row=2, column=0, padx=5, pady=2, sticky="w")
+        ttk.Button(durations_frame, text="Edit Long Break", command=self._edit_long_break_duration_in_editor).grid(row=2, column=1, padx=5, pady=2, sticky="e")
+        self.eating_break_duration_label = ttk.Label(durations_frame, text="")
+        self.eating_break_duration_label.grid(row=3, column=0, padx=5, pady=2, sticky="w")
+        ttk.Button(durations_frame, text="Edit Eating Break", command=self._edit_eating_break_duration_in_editor).grid(row=3, column=1, padx=5, pady=2, sticky="e")
+
         action_buttons_frame = ttk.Frame(self)
-        action_buttons_frame.grid(row=4, column=0, columnspan=3, padx=10, pady=(10,10), sticky="sew") # Stick to south-east-west
-        action_buttons_frame.grid_columnconfigure(0, weight=1) # Allow cancel to take space
-        action_buttons_frame.grid_columnconfigure(1, weight=1) # Allow save to take space
-
-        self.save_button = ttk.Button(action_buttons_frame, text="Save Sequence", command=self._save_sequence, style="Accent.TButton") # Using Accent style if available
+        action_buttons_frame.grid(row=6, column=0, columnspan=3, padx=10, pady=(10,10), sticky="sew") # Changed row to 6
+        # ... (rest of action_buttons_frame setup as before) ...
+        action_buttons_frame.grid_columnconfigure(0, weight=1)
+        action_buttons_frame.grid_columnconfigure(1, weight=1)
+        self.save_button = ttk.Button(action_buttons_frame, text="Save Sequence", command=self._save_sequence, style="Accent.TButton")
         self.save_button.grid(row=0, column=1, padx=5, pady=5, sticky="ew")
-
         self.cancel_button = ttk.Button(action_buttons_frame, text="Cancel", command=self.destroy)
         self.cancel_button.grid(row=0, column=0, padx=5, pady=5, sticky="ew")
         
-        # Configure grid weights for main window
-        self.grid_rowconfigure(1, weight=1) # Listbox frame should expand
+        self.grid_rowconfigure(1, weight=1) # Listbox frame
+        # self.grid_rowconfigure(2, weight=0) # Total time label (no vertical expansion)
+        # self.grid_rowconfigure(5, weight=0) # Durations frame (no vertical expansion by default)
         self.grid_columnconfigure(0, weight=1)
 
-        self._refresh_listbox()
-        self.protocol("WM_DELETE_WINDOW", self.destroy) # Ensure grab_set is released on close via X
+        self._refresh_duration_displays()
+        self._refresh_listbox() # This will now also call the total time calculation
+        self.protocol("WM_DELETE_WINDOW", self.destroy)
+
+    
+    def _format_total_time(self, total_minutes):
+        if total_minutes < 0:
+            total_minutes = 0
+
+        hours = total_minutes // 60
+        minutes = total_minutes % 60
+
+        if hours > 0:
+            return f"Total Sequence Time: {hours} hour{'s' if hours != 1 else ''} {minutes} minute{'s' if minutes != 1 else ''}"
+        else:
+            return f"Total Sequence Time: {minutes} minute{'s' if minutes != 1 else ''}"
+
+    def _calculate_and_display_total_sequence_time(self):
+        total_minutes = 0
+        if self.editable_sequence:
+            for item in self.editable_sequence:
+                try:
+                    duration_minutes = self.app_controller._get_duration_for_type(item['type'])
+                    total_minutes += duration_minutes
+                except Exception as e:
+                    print(f"Error calculating total time for item type {item.get('type', 'N/A')}: {e}")
+
+        formatted_time_str = self._format_total_time(total_minutes)
+        if hasattr(self, 'total_sequence_time_label'): # Ensure label exists
+            self.total_sequence_time_label.config(text=formatted_time_str)
 
     def _rename_selected_session_dialog(self, event=None): # event is passed by bind
         selected_indices = self.sequence_listbox.curselection()
@@ -372,31 +478,84 @@ class SequenceEditorWindow(tk.Toplevel):
         elif new_name == "": # User entered an empty string
             messagebox.showwarning("Invalid Name", "Session name cannot be empty.", parent=self)
 
+
+    def _refresh_duration_displays(self):
+        self.focus_duration_label.config(text=f"Focus Duration: {self.app_controller.focus_duration_minutes} min")
+        self.short_break_duration_label.config(text=f"Short Break Duration: {self.app_controller.short_break_duration_minutes} min")
+        self.long_break_duration_label.config(text=f"Long Break Duration: {self.app_controller.long_break_duration_minutes} min")
+        self.eating_break_duration_label.config(text=f"Eating Break Duration: {self.app_controller.eating_break_duration_minutes} min")
+
+    def _edit_focus_duration_in_editor(self):
+        new_duration = simpledialog.askinteger(
+            "Focus Duration", "Enter focus duration (minutes):",
+            parent=self, minvalue=1, maxvalue=180,
+            initialvalue=self.app_controller.focus_duration_minutes
+        )
+        if new_duration is not None:
+            self.app_controller.focus_duration_minutes = new_duration
+            self.app_controller._save_settings()
+            self._refresh_duration_displays()
+            self._refresh_listbox() # Durations affect projected times
+
+    def _edit_short_break_duration_in_editor(self):
+        new_duration = simpledialog.askinteger(
+            "Short Break Duration", "Enter short break duration (minutes):",
+            parent=self, minvalue=1, maxvalue=60,
+            initialvalue=self.app_controller.short_break_duration_minutes
+        )
+        if new_duration is not None:
+            self.app_controller.short_break_duration_minutes = new_duration
+            self.app_controller._save_settings()
+            self._refresh_duration_displays()
+            self._refresh_listbox()
+
+    def _edit_long_break_duration_in_editor(self):
+        new_duration = simpledialog.askinteger(
+            "Long Break Duration", "Enter long break duration (minutes):",
+            parent=self, minvalue=1, maxvalue=90,
+            initialvalue=self.app_controller.long_break_duration_minutes
+        )
+        if new_duration is not None:
+            self.app_controller.long_break_duration_minutes = new_duration
+            self.app_controller._save_settings()
+            self._refresh_duration_displays()
+            self._refresh_listbox()
+
+    def _edit_eating_break_duration_in_editor(self):
+        new_duration = simpledialog.askinteger(
+            "Eating Break Duration", "Enter eating break duration (minutes, 5-120):",
+            parent=self, minvalue=5, maxvalue=120,
+            initialvalue=self.app_controller.eating_break_duration_minutes
+        )
+        if new_duration is not None:
+            self.app_controller.eating_break_duration_minutes = new_duration
+            self.app_controller._save_settings()
+            self._refresh_duration_displays()
+            self._refresh_listbox()
+
+
     def _refresh_listbox(self):
         self.sequence_listbox.delete(0, tk.END)
-        
+
         if not self.editable_sequence:
             self.sequence_listbox.insert(tk.END, "Sequence is empty. Add sessions to begin.")
+            self._calculate_and_display_total_sequence_time() # Update total time even for empty sequence
             return
 
-        current_projected_time = self.base_time
+        current_projected_time = self.base_time # Reset base time for projection
         for i, item in enumerate(self.editable_sequence):
-            # item is a dict like {'type': 'Focus', 'name': 'My Focus Time'}
             display_name = item.get('name', item.get('type', 'Unknown Session'))
-            
+            duration_minutes = 0
             try:
-                # Get duration from the main app controller
                 duration_minutes = self.app_controller._get_duration_for_type(item['type'])
             except Exception as e:
-                print(f"Error getting duration for type {item.get('type', 'N/A')}: {e}")
-                duration_minutes = 0 # Default to 0 if type is unknown or causes error
-            
-            # Add the duration of the current session to project its end time
+                print(f"Error getting duration for type {item.get('type', 'N/A')} in _refresh_listbox: {e}")
+
             current_projected_time += datetime.timedelta(minutes=duration_minutes)
-            time_str = current_projected_time.strftime("%H:%M") # Format as HH:MM
-            
-            # Using an em-dash (—) as requested in your example "focus — 8:45"
+            time_str = current_projected_time.strftime("%H:%M")
             self.sequence_listbox.insert(tk.END, f"{i+1}. {display_name} — {time_str}")
+
+        self._calculate_and_display_total_sequence_time()
 
 
     def _add_session_type(self, session_type_str):
@@ -467,20 +626,21 @@ class SequenceEditorWindow(tk.Toplevel):
     def _save_sequence(self):
         if not self.editable_sequence:
             if not messagebox.askyesno("Empty Sequence", 
-                                       "The sequence is empty. Saving will result in no defined sequence. Continue?",
-                                       parent=self):
+                                    "The sequence is empty. Saving will result in no defined sequence. Continue?",
+                                    parent=self):
                 return
 
         self.app_controller.custom_sequence = list(self.editable_sequence) # Update the main app's sequence
-        self.app_controller._save_settings() # Persist to file
-        
-        # If the timer is idle, restarting the sequence will pick up the new one.
-        # If a sequence is active, it will complete, and the new one will be used next time.
-        # Reset current_sequence_index in main app if it's idle, so "Start Sequence" starts fresh.
+
+        # Recalculate XP goal based on the new sequence
+        self.app_controller._recalculate_xp_goal_from_sequence() 
+
+        self.app_controller._save_settings() # Persist sequence and other settings to file
+
         if not self.app_controller.timer_running:
             self.app_controller.current_sequence_index = -1
 
-        messagebox.showinfo("Sequence Saved", "The new Pomodoro sequence has been saved.", parent=self)
+        messagebox.showinfo("Sequence Saved", "The new Pomodoro sequence and settings have been saved.", parent=self)
         self.destroy()
 
 # +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
@@ -490,19 +650,26 @@ class PomodoroWebsiteBlocker:
     def __init__(self, root_window):
         self.root = root_window
         self.root.title("Pomodoro XP Blocker")
-        estimated_height = 10 + 30 + 20 + ICON_SIZE + 20 + CIRCLE_CANVAS_SIZE + 20 + (3 * (30 + 10)) + 30 + XP_BAR_HEIGHT + 30 + 20
-        self.root.geometry(f"500x{estimated_height}")
+        estimated_height = 10 + 30 + 20 + ICON_SIZE + 20 + CIRCLE_CANVAS_SIZE + 20 + 30 + XP_BAR_HEIGHT + 30 + 20
+        self.root.geometry(f"350x{estimated_height}")
 
-        # --- MODIFICATION: Initialize sequence attributes EARLIER ---
         self.custom_sequence = [] 
         self.current_sequence_index = -1
-        # --- END MODIFICATION ---
+
 
         if not self._is_admin():
             messagebox.showerror("Admin Privileges Required", "This application must be run with sudo privileges.")
             self.root.destroy(); return
 
         self._initialize_durations()
+
+        # Streak Feature Attributes
+        self.ascii_art_definitions = ASCII_ART_PIECES
+        self.unlocked_achievements = []  # List of art piece IDs
+        self.current_art_piece_id = None
+        self.current_art_progress = 0    # Symbols revealed for the current piece
+        self.last_xp_full_date_str = None # Store as YYYY-MM-DD string
+
         self._load_settings() # This will now also load custom_sequence
 
         self._timer_id = None
@@ -525,7 +692,9 @@ class PomodoroWebsiteBlocker:
         self._create_menubar()
         self._setup_ui()
 
-        self._update_button_labels()
+        self._update_current_art_piece() # Determine first/next art piece
+        self._update_streak_display()
+
         self._load_block_list_from_file()
         self._ensure_all_blocked_sites_are_unblocked_on_startup()
         self._update_timer_display()
@@ -545,7 +714,6 @@ class PomodoroWebsiteBlocker:
         # --- END MODIFICATION ---
 
         self.root.bind("<Configure>", self._on_window_resize)
-        # self._update_button_labels() # Call was here, ensure it's effectively called after settings load (it is, earlier)
 
     # --- MODIFICATION: Removed first (incomplete/buggy) definitions of _load_settings, _save_settings, _reset_to_default_settings_and_save ---
     # Old _load_settings was here (approx lines 194-233) - REMOVED
@@ -600,6 +768,45 @@ class PomodoroWebsiteBlocker:
 
         sound_thread = threading.Thread(target=play_and_callback, daemon=True)
         sound_thread.start()
+
+    def _update_current_art_piece(self):
+        """Determines and sets the current art piece the user is working on."""
+        initial_art_piece_id = self.current_art_piece_id
+        new_current_art_piece_found = False
+
+        for art_def in self.ascii_art_definitions:
+            if art_def["id"] not in self.unlocked_achievements:
+                self.current_art_piece_id = art_def["id"]
+                if initial_art_piece_id != self.current_art_piece_id : # Changed to a new piece
+                    self.current_art_progress = 0 # Reset progress for this new piece
+                new_current_art_piece_found = True
+                break
+
+        if not new_current_art_piece_found: # All pieces might be unlocked
+            if self.unlocked_achievements and len(self.unlocked_achievements) == len(self.ascii_art_definitions):
+                print("All art pieces unlocked!")
+                self.current_art_piece_id = "ALL_UNLOCKED" # Special ID
+                self.current_art_progress = 0
+            elif not self.ascii_art_definitions:
+                print("No art pieces defined.")
+                self.current_art_piece_id = None
+            # If some are unlocked but somehow no new one found (shouldn't happen with good definitions)
+            # keep current_art_piece_id as is, or nullify if it was for an already unlocked piece.
+            # The logic above should handle finding the *first* non-unlocked.
+
+        # If after trying to find a new piece, current_art_piece_id points to an unlocked one,
+        # (e.g. due to manual settings edit or loading old data)
+        # it means we should nullify it or re-run to find the actual next one.
+        # The loop above should find the *first available one*.
+        # If self.current_art_piece_id is still an ID that's in unlocked_achievements, then all are done.
+        if self.current_art_piece_id and self.current_art_piece_id in self.unlocked_achievements:
+            self.current_art_piece_id = "ALL_UNLOCKED" # Mark as all done
+            self.current_art_progress = 0
+
+
+        if initial_art_piece_id != self.current_art_piece_id or not hasattr(self, 'streak_display_label'): # Update display if piece changed or label not yet made
+            if hasattr(self, '_update_streak_display'): # Check if UI method exists
+                self._update_streak_display()
 
     def _simulate_browser_reload(self):
         if not PYAUTOGUI_AVAILABLE:
@@ -728,24 +935,47 @@ class PomodoroWebsiteBlocker:
                                                 bg=self.root.cget('bg'), highlightthickness=0, cursor="hand2")
         self.pause_play_icon_canvas.grid(row=0, column=2, padx=(5, 20), pady=5, sticky="e")
         self.pause_play_icon_canvas.bind("<Button-1>", self._on_pause_play_icon_click)
-        self.start_sequence_button = ttk.Button(self.root, text="Start Sequence", command=self._start_custom_sequence)
-        self.start_sequence_button.grid(row=3, column=0, columnspan=4, padx=20, pady=5, sticky="ew")
-        self.start_short_break_button = ttk.Button(self.root, text="", command=self._start_short_break_session)
-        self.start_short_break_button.grid(row=4, column=0, columnspan=2, padx=(20,5), pady=5, sticky="ew")
-        self.start_long_break_button = ttk.Button(self.root, text="", command=self._start_long_break_session)
-        self.start_long_break_button.grid(row=4, column=2, columnspan=2, padx=(5,20), pady=5, sticky="ew")
-        self.start_eating_break_button = ttk.Button(self.root, text="", command=self._start_eating_break_session)
-        self.start_eating_break_button.grid(row=5, column=0, columnspan=4, padx=20, pady=5, sticky="ew")
+
         self.xp_bar_canvas = tk.Canvas(self.root, height=XP_BAR_HEIGHT + 20,
                                        bg=self.root.cget('bg'), highlightthickness=0)
-        self.xp_bar_canvas.grid(row=6, column=0, columnspan=4, padx=10, pady=(10,5), sticky="ew")
+        self.xp_bar_canvas.grid(row=3, column=0, columnspan=4, padx=10, pady=(10,5), sticky="ew")
         counter_frame = ttk.Frame(self.root)
-        counter_frame.grid(row=7, column=0, columnspan=4, sticky="ew", padx=10, pady=(0,10))
+        counter_frame.grid(row=4, column=0, columnspan=4, sticky="ew", padx=10, pady=(0,5)) # Reduced bottom pady
         counter_frame.grid_columnconfigure(0, weight=1)
-        counter_frame.grid_columnconfigure(1, weight=1)
         self.pomodoros_completed_label = ttk.Label(counter_frame, text="")
         self.pomodoros_completed_label.grid(row=0, column=0, sticky="w")
+
+        # New Streak Display Label
+        self.streak_display_label = ttk.Label(self.root, text="Streak: Initializing...", font=("Helvetica", 10))
+        self.streak_display_label.grid(row=5, column=0, columnspan=4, padx=10, pady=(0, 10), sticky="ew")
         for i in range(4): self.root.grid_columnconfigure(i, weight=1)
+
+    def _update_streak_display(self):
+        if not hasattr(self, 'streak_display_label'): # UI not ready
+            return
+
+        display_text = "Streak: "
+        if not self.current_art_piece_id:
+            display_text += "No art challenge defined or available."
+        elif self.current_art_piece_id == "ALL_UNLOCKED":
+            display_text += "All art pieces unlocked! Congratulations!"
+        else:
+            target_art_def = next((art for art in self.ascii_art_definitions if art["id"] == self.current_art_piece_id), None)
+            if target_art_def:
+                required_symbols = get_symbols_from_art(target_art_def["art_string"])
+                total_len = len(required_symbols)
+                revealed_symbols = required_symbols[:self.current_art_progress]
+
+                # Construct partial art string for display
+                placeholder_char = "_" 
+                partial_art_str = "".join(revealed_symbols) + \
+                                placeholder_char * (total_len - self.current_art_progress)
+
+                display_text += f"{target_art_def['name']} | Progress: {partial_art_str} ({self.current_art_progress}/{total_len})"
+            else:
+                display_text += "Loading art challenge..."
+
+        self.streak_display_label.config(text=display_text)
 
     def _on_window_resize(self, event=None):
         if hasattr(self, 'xp_bar_canvas') and self.xp_bar_canvas.winfo_exists():
@@ -767,38 +997,17 @@ class PomodoroWebsiteBlocker:
         ]
         return canvas.create_polygon(points, **kwargs, smooth=True)
 
-    def _start_custom_sequence(self):
-        if self.timer_running:
-            messagebox.showwarning("Timer Active", "A session or sequence is already in progress.", parent=self.root)
-            return
-        if not self.custom_sequence:
-            messagebox.showerror("Sequence Error", "No Pomodoro sequence is defined. Check settings.", parent=self.root)
-            return
-        first_session_item = self.custom_sequence[0]
-        first_session_type = first_session_item['type']
-        first_session_name = first_session_item['name']
-        first_duration = self._get_duration_for_type(first_session_type)
-        if not messagebox.askyesno("Start Sequence?", 
-                                f"Start the defined Pomodoro sequence?\nFirst session: {first_session_name} ({first_duration} min)", 
-                                parent=self.root):
-            return
-        self.current_sequence_index = -1
-        self._proceed_to_next_in_sequence()
-        self._update_ui_for_timer_state()
-
     def _create_menubar(self):
         menubar = tk.Menu(self.root)
         edit_menu = tk.Menu(menubar, name='edit', tearoff=0)
         edit_menu.add_command(label="Manage Blocked Websites...", command=self._open_block_list_manager)
         edit_menu.add_separator()
-        edit_menu.add_command(label="Set Focus Duration...", command=self._edit_focus_duration)
-        edit_menu.add_command(label="Set Short Break Duration...", command=self._edit_short_break_duration)
-        edit_menu.add_command(label="Set Long Break Duration...", command=self._edit_long_break_duration)
-        edit_menu.add_command(label="Set Eating Break Duration...", command=self._edit_eating_break_duration)
-        edit_menu.add_separator()
-        edit_menu.add_command(label="Set Pomodoros for Full XP...", command=self._edit_pomodoros_for_full_xp)
-        edit_menu.add_separator() # New Separator
         edit_menu.add_command(label="Edit Pomodoro Sequence...", command=self._open_sequence_editor) # New Menu Item
+
+        achievements_menu = tk.Menu(menubar, name='achievements', tearoff=0)
+        achievements_menu.add_command(label="View Unlocked Art", command=self._open_achievements_viewer)
+        menubar.add_cascade(label="Achievements", menu=achievements_menu) # Add it as a top-level menu
+
         menubar.add_cascade(label="Edit", menu=edit_menu)
         self.root.config(menu=menubar)
 
@@ -814,6 +1023,15 @@ class PomodoroWebsiteBlocker:
         if self.sequence_editor_window:
             self.sequence_editor_window.destroy()
             self.sequence_editor_window = None
+    
+    def _open_achievements_viewer(self):
+        if not hasattr(self, '_achievements_window') or \
+        not self._achievements_window or \
+        not self._achievements_window.winfo_exists():
+            self._achievements_window = AchievementsWindow(self.root, self)
+        else:
+            self._achievements_window.lift()
+            self._achievements_window.focus_set()
 
     def _draw_xp_bar(self):
         if not hasattr(self, 'xp_bar_canvas') or not self.xp_bar_canvas.winfo_exists(): return
@@ -843,6 +1061,95 @@ class PomodoroWebsiteBlocker:
                     fill=XP_BAR_HIGHLIGHT_COLOR, width=highlight_thickness
                 )
         self.pomodoros_completed_label.config(text=f"XP: {self.pomodoro_count} / {self.pomodoros_for_full_xp} Pomodoros")
+    
+    def _handle_xp_bar_full(self):
+        """Called when pomodoro_count reaches pomodoros_for_full_xp."""
+        print("XP bar is full. Processing streak.")
+
+        if not self.current_art_piece_id or self.current_art_piece_id == "ALL_UNLOCKED":
+            print("XP bar full, but no current art piece to progress or all unlocked.")
+            if self.current_art_piece_id != "ALL_UNLOCKED": # If None, try to set one.
+                self._update_current_art_piece() 
+            if not self.current_art_piece_id or self.current_art_piece_id == "ALL_UNLOCKED":
+                # Reset pomodoro count even if no art piece to progress for consistency
+                self.pomodoro_count = 0
+                self._draw_xp_bar()
+                return
+
+        today_obj = datetime.date.today()
+        today_str = today_obj.isoformat()
+
+        target_art_def = next((art for art in self.ascii_art_definitions if art["id"] == self.current_art_piece_id), None)
+        if not target_art_def:
+            print(f"Error: Current art piece ID '{self.current_art_piece_id}' not found.")
+            self._update_current_art_piece() # Attempt to recover
+            self.pomodoro_count = 0 # Reset XP for next attempt
+            self._draw_xp_bar()
+            return
+
+        required_symbols = get_symbols_from_art(target_art_def["art_string"])
+        required_streak_length = len(required_symbols)
+
+        # 1. Check if already awarded today
+        if self.last_xp_full_date_str == today_str:
+            print("Daily art progress already awarded for today.")
+            # XP bar should remain full until next day's first focus completion makes it 0 again
+            # Or, if we want it to reset now to allow re-earning:
+            # self.pomodoro_count = 0
+            # self._draw_xp_bar()
+            return # Crucially, don't process further for *this* XP fill event if already awarded today
+
+        # 2. Check for broken streak (if there was a previous date and some progress)
+        streak_broken_this_time = False
+        if self.last_xp_full_date_str and self.current_art_progress > 0:
+            try:
+                last_date_obj = datetime.date.fromisoformat(self.last_xp_full_date_str)
+                days_diff = (today_obj - last_date_obj).days
+                if days_diff > 1:
+                    print(f"Streak broken for '{target_art_def['name']}'. Progress was {self.current_art_progress}, days_diff: {days_diff}")
+                    messagebox.showinfo("Streak Broken!",
+                                        f"You missed a day! Your progress on art piece '{target_art_def['name']}' has been reset.",
+                                        parent=self.root)
+                    self.current_art_progress = 0
+                    streak_broken_this_time = True # Progress will be 1 after today's award
+            except ValueError:
+                print(f"Error parsing last_xp_full_date_str: {self.last_xp_full_date_str}. Assuming new streak.")
+                self.current_art_progress = 0 # Treat as new streak if date is corrupt
+
+        # 3. Award progress for today
+        self.current_art_progress += 1
+        self.last_xp_full_date_str = today_str # Update to today
+
+        # Display logic for current art progress (partial art)
+        revealed_art_so_far = "".join(required_symbols[:self.current_art_progress])
+        placeholder_char = "_" # Or "." or "?"
+        display_progress_art = revealed_art_so_far + placeholder_char * (required_streak_length - self.current_art_progress)
+
+        if streak_broken_this_time:
+            print(f"Streak for '{target_art_def['name']}' restarted. Progress: 1/{required_streak_length}. Art: {display_progress_art}")
+        else:
+            print(f"Streak progress for '{target_art_def['name']}': {self.current_art_progress}/{required_streak_length}. Art: {display_progress_art}")
+
+        self._update_streak_display() # Update the UI label
+
+        # 4. Check for art piece completion
+        if self.current_art_progress >= required_streak_length:
+            self.unlocked_achievements.append(self.current_art_piece_id)
+            print(f"Art piece '{target_art_def['name']}' ({target_art_def['art_string']}) unlocked!")
+            messagebox.showinfo("Achievement Unlocked!",
+                                f"Congratulations! You've completed the art piece:\n{target_art_def['name']}\n\n{target_art_def['art_string']}",
+                                parent=self.root)
+
+            # Reset for the next piece
+            self.current_art_progress = 0 
+            # self.last_xp_full_date_str = None # Let this be handled by next day's check
+            self._update_current_art_piece() # Sets up the next art piece (and calls _update_streak_display)
+
+        # 5. Reset pomodoro_count as XP is now "spent" for today's art symbol
+        self.pomodoro_count = 0
+        self._draw_xp_bar()
+
+        self._save_settings()
 
     def _setup_timer_canvas_elements(self):
         center_x = CIRCLE_CANVAS_SIZE / 2
@@ -910,84 +1217,101 @@ class PomodoroWebsiteBlocker:
             if CONFIG_FILE_PATH.exists():
                 with open(CONFIG_FILE_PATH, "r", encoding='utf-8') as f:
                     settings = json.load(f)
-
+                # ... (loading durations, custom_sequence as before) ...
                 self.focus_duration_minutes = int(settings.get("focus_duration_minutes", self.focus_duration_minutes))
                 self.short_break_duration_minutes = int(settings.get("short_break_duration_minutes", self.short_break_duration_minutes))
                 self.long_break_duration_minutes = int(settings.get("long_break_duration_minutes", self.long_break_duration_minutes))
                 self.eating_break_duration_minutes = int(settings.get("eating_break_duration_minutes", self.eating_break_duration_minutes))
-                self.pomodoros_for_full_xp = int(settings.get("pomodoros_for_full_xp", self.pomodoros_for_full_xp))
 
                 loaded_sequence_raw = settings.get("custom_sequence", DEFAULT_SEQUENCE)
-
+                # ... (sequence loading logic as before) ...
                 if not loaded_sequence_raw: # Handle empty sequence from file
-                    self.custom_sequence = list(DEFAULT_SEQUENCE) # Use a fresh copy of default
-                    print("Empty custom sequence in settings, using default.")
-                elif isinstance(loaded_sequence_raw[0], str): # Check if it's old format (list of strings)
-                    print("Old sequence format detected in settings, converting to new format.")
+                    self.custom_sequence = list(DEFAULT_SEQUENCE) 
+                elif isinstance(loaded_sequence_raw, list) and loaded_sequence_raw and isinstance(loaded_sequence_raw[0], str):
                     self.custom_sequence = [{'type': item_str, 'name': item_str} for item_str in loaded_sequence_raw]
                 elif isinstance(loaded_sequence_raw, list) and all(isinstance(item, dict) and 'type' in item and 'name' in item for item in loaded_sequence_raw):
-                    self.custom_sequence = loaded_sequence_raw # Already new format and seems valid
-                else: # Unrecognized format
-                    print("Invalid or unrecognized custom sequence format in settings, using default.")
+                    self.custom_sequence = loaded_sequence_raw 
+                else: 
                     self.custom_sequence = list(DEFAULT_SEQUENCE) 
 
-                if not (1 <= self.focus_duration_minutes <= 180): self.focus_duration_minutes = DEFAULT_FOCUS_DURATION_MINUTES
-                if not (1 <= self.short_break_duration_minutes <= 60): self.short_break_duration_minutes = DEFAULT_SHORT_BREAK_DURATION_MINUTES
-                if not (1 <= self.long_break_duration_minutes <= 90): self.long_break_duration_minutes = DEFAULT_LONG_BREAK_DURATION_MINUTES
-                if not (5 <= self.eating_break_duration_minutes <= 120): self.eating_break_duration_minutes = DEFAULT_EATING_BREAK_DURATION_MINUTES
-                if not (1 <= self.pomodoros_for_full_xp <= 100): self.pomodoros_for_full_xp = DEFAULT_POMODOROS_FOR_FULL_XP
-            else:
-                # Config file doesn't exist, set default sequence (already in new format)
-                self.custom_sequence = list(DEFAULT_SEQUENCE) # Ensure it's a fresh copy of the dict list
-                self._save_settings()
-            
+                # Load Streak Data
+                self.unlocked_achievements = settings.get("unlocked_achievements", [])
+                self.current_art_piece_id = settings.get("current_art_piece_id", None)
+                self.current_art_progress = settings.get("current_art_progress", 0)
+                self.last_xp_full_date_str = settings.get("last_xp_full_date_str", None)
+
+            else: # Config file doesn't exist
+                self.custom_sequence = list(DEFAULT_SEQUENCE)
+                # Initialize streak defaults for a fresh start
+                self.unlocked_achievements = []
+                self.current_art_piece_id = None # Will be set by _update_current_art_piece
+                self.current_art_progress = 0
+                self.last_xp_full_date_str = None
+
+            self._recalculate_xp_goal_from_sequence() # This should be called after custom_sequence is set
+
+            if not CONFIG_FILE_PATH.exists():
+                self._update_current_art_piece() # Set initial piece if new config
+                self._save_settings() # Save initial settings
+
+        # ... (except blocks as before, ensure _reset_to_default_settings_and_save also handles streak vars) ...
         except (json.JSONDecodeError, ValueError, TypeError) as e:
-            print(f"Error loading settings file '{CONFIG_FILE_PATH}': {e}. Using default values and attempting to save them.")
+            print(f"Error loading settings file '{CONFIG_FILE_PATH}': {e}. Using default values.")
             self._reset_to_default_settings_and_save()
         except Exception as e:
             print(f"An unexpected error occurred while loading settings: {e}. Using default values.")
             self._reset_to_default_settings_and_save()
         finally:
-            # --- MODIFICATION: Ensure sequence index is reset ---
             self.current_sequence_index = -1
-            # --- END MODIFICATION ---
+            # Call _update_current_art_piece here too, to ensure consistency if loaded data was odd
+            self._update_current_art_piece()
 
     # --- MODIFICATION: This is now the primary (and only) _reset_to_default_settings_and_save method ---
     def _reset_to_default_settings_and_save(self):
-        """Resets all durations and sequence to their hardcoded defaults and saves them."""
-        self._initialize_durations()
-        self.custom_sequence = list(DEFAULT_SEQUENCE) # Use a copy of the default (now list of dicts)
+        """Resets all durations, sequence, and streak to defaults and saves them."""
+        self._initialize_durations() # Sets self.pomodoros_for_full_xp to DEFAULT initially
+        self.custom_sequence = list(DEFAULT_SEQUENCE)
         self.current_sequence_index = -1
+
+        # Reset streak data
+        self.unlocked_achievements = []
+        self.current_art_piece_id = None # _update_current_art_piece will pick the first
+        self.current_art_progress = 0
+        self.last_xp_full_date_str = None
+
+        self._recalculate_xp_goal_from_sequence()
+        self._update_current_art_piece() # Set the first art piece as current
+
         self._save_settings()
-        self._update_button_labels()
+        if hasattr(self, 'xp_bar_canvas') and self.xp_bar_canvas.winfo_exists(): # Ensure UI is ready
+            self._draw_xp_bar()
+            self._update_streak_display()
 
-    def _edit_duration_dialog(self, title, prompt, current_value_attr, min_val=1, max_val=120):
-        new_duration = simpledialog.askinteger(
-            title, prompt,
-            parent=self.root,
-            minvalue=min_val,
-            maxvalue=max_val,
-            initialvalue=getattr(self, current_value_attr)
-        )
-        if new_duration is not None:
-            setattr(self, current_value_attr, new_duration)
-            self._update_button_labels()
-            self._save_settings()
-            if current_value_attr == "pomodoros_for_full_xp":
-                 self._draw_xp_bar()
-                 if self.pomodoro_count >= self.pomodoros_for_full_xp:
-                     messagebox.showinfo("XP Goal Met!", "You've already met or exceeded the new XP goal!", parent=self.root)
+    def _recalculate_xp_goal_from_sequence(self):
+        """
+        Calculates and sets self.pomodoros_for_full_xp based on the number of 
+        'Focus' sessions in the current custom_sequence.
+        Updates the XP bar display.
+        """
+        focus_count = 0
+        if self.custom_sequence:  # Check if sequence exists and is not empty
+            for item in self.custom_sequence:
+                if item.get('type') == "Focus":
+                    focus_count += 1
 
-    def _edit_focus_duration(self):
-        self._edit_duration_dialog("Focus Duration", "Enter focus duration (minutes):", "focus_duration_minutes", 1, 180)
-    def _edit_short_break_duration(self):
-        self._edit_duration_dialog("Short Break Duration", "Enter short break duration (minutes):", "short_break_duration_minutes", 1, 60)
-    def _edit_long_break_duration(self):
-        self._edit_duration_dialog("Long Break Duration", "Enter long break duration (minutes):", "long_break_duration_minutes", 1, 90)
-    def _edit_eating_break_duration(self):
-        self._edit_duration_dialog("Eating Break Duration", "Enter eating break duration (minutes, 5-120):", "eating_break_duration_minutes", 5, 120)
-    def _edit_pomodoros_for_full_xp(self):
-        self._edit_duration_dialog("XP Goal", "Enter Pomodoros for full XP (1-100):", "pomodoros_for_full_xp", 1, 100)
+        # If there are focus sessions, the goal is the number of focus sessions.
+        # If there are no focus sessions (e.g., empty or break-only sequence),
+        # set the goal to 1 to prevent division by zero and for sensible display.
+        self.pomodoros_for_full_xp = focus_count if focus_count > 0 else 1
+
+        print(f"Recalculated XP goal: {self.pomodoros_for_full_xp} based on {focus_count} focus sessions.")
+
+        # Ensure XP bar is redrawn with the new goal
+        if hasattr(self, 'xp_bar_canvas') and self.xp_bar_canvas.winfo_exists():
+            self._draw_xp_bar()
+        elif hasattr(self, 'pomodoros_completed_label'): # Fallback to update label text if canvas not ready
+            self.pomodoros_completed_label.config(text=f"XP: {self.pomodoro_count} / {self.pomodoros_for_full_xp} Pomodoros")
+
 
     # --- MODIFICATION: This is now the primary (and only) _save_settings method ---
     def _save_settings(self):
@@ -996,52 +1320,35 @@ class PomodoroWebsiteBlocker:
             "short_break_duration_minutes": self.short_break_duration_minutes,
             "long_break_duration_minutes": self.long_break_duration_minutes,
             "eating_break_duration_minutes": self.eating_break_duration_minutes,
-            "pomodoros_for_full_xp": self.pomodoros_for_full_xp,
-            # --- MODIFICATION: Added custom_sequence saving ---
-            "custom_sequence": self.custom_sequence
-            # --- END MODIFICATION ---
+            "custom_sequence": self.custom_sequence,
+            # Streak Data
+            "unlocked_achievements": self.unlocked_achievements,
+            "current_art_piece_id": self.current_art_piece_id,
+            "current_art_progress": self.current_art_progress,
+            "last_xp_full_date_str": self.last_xp_full_date_str,
         }
+        # ... (rest of saving logic as before) ...
         try:
             CONFIG_FILE_PATH.parent.mkdir(parents=True, exist_ok=True)
             with open(CONFIG_FILE_PATH, "w", encoding='utf-8') as f:
                 json.dump(settings, f, indent=4)
-            print("Settings saved (including custom sequence).") # Updated print message
+            print("Settings saved (including streak data).")
         except Exception as e:
             messagebox.showerror("Settings Error", f"Could not save timer settings: {e}", parent=self.root if self.root.winfo_exists() else None)
             print(f"Error saving settings: {e}")
 
-
-    def _update_button_labels(self):
-        if hasattr(self, 'start_sequence_button'):
-            self.start_sequence_button.config(text="Start Defined Sequence")
-        if hasattr(self, 'start_short_break_button'):
-            self.start_short_break_button.config(text=f"Manual Short Break ({self.short_break_duration_minutes} min)")
-        if hasattr(self, 'start_long_break_button'):
-             self.start_long_break_button.config(text=f"Manual Long Break ({self.long_break_duration_minutes} min)")
-        if hasattr(self, 'start_eating_break_button'):
-            self.start_eating_break_button.config(text=f"Manual Eating Break ({self.eating_break_duration_minutes} min)")
-
     def _update_ui_for_timer_state(self):
         timer_is_active = self.timer_running
-        sequence_active_or_starting = self.timer_running and self.current_sequence_index >= 0
-
-        if hasattr(self, 'start_sequence_button'): # Check attribute existence
-            self.start_sequence_button.config(state=tk.DISABLED if timer_is_active else tk.NORMAL)
-
-        manual_button_state = tk.DISABLED if sequence_active_or_starting else tk.NORMAL
-        if not timer_is_active and self.current_sequence_index == -1 :
-             manual_button_state = tk.NORMAL
-
-        if hasattr(self, 'start_short_break_button'): # Check attribute existence
-            self.start_short_break_button.config(state=manual_button_state)
-        if hasattr(self, 'start_long_break_button'): # Check attribute existence
-            self.start_long_break_button.config(state=manual_button_state)
-        if hasattr(self, 'start_eating_break_button'): # Check attribute existence
-            self.start_eating_break_button.config(state=manual_button_state)
 
         self._draw_stop_icon(is_enabled=timer_is_active)
-        self._draw_pause_play_icon(show_play=self.timer_paused, is_enabled=timer_is_active)
 
+        # Pause/Play icon:
+        if timer_is_active:
+
+            self._draw_pause_play_icon(show_play=self.timer_paused, is_enabled=True)
+        else:
+            can_start_new_sequence = bool(self.custom_sequence)
+            self._draw_pause_play_icon(show_play=True, is_enabled=can_start_new_sequence)
         self._update_timer_display()
 
 
@@ -1099,9 +1406,12 @@ class PomodoroWebsiteBlocker:
             # ... (Focus completion logic - unchanged) ...
             self.pomodoro_count += 1
             self._draw_xp_bar()
-            if self.pomodoro_count == self.pomodoros_for_full_xp:
-                messagebox.showinfo("XP Goal Reached!", "Congratulations! You've filled the XP bar!", parent=self.root)
-            if self.blocked_websites:
+            if self.pomodoro_count >= self.pomodoros_for_full_xp: # Use >= just in case
+            # Original message for XP Goal Reached (filling the bar)
+                messagebox.showinfo("XP Goal Reached!", f"Congratulations! You've earned {self.pomodoros_for_full_xp} XP today!", parent=self.root)
+                self._handle_xp_bar_full() # This will handle streak and potentially reset pomodoro_count
+
+            if self.blocked_websites: # This should still happen
                 self._unblock_domains(list(self.blocked_websites))
             
             self.notification_window = RepeatingNotificationWindow(
@@ -1180,16 +1490,30 @@ class PomodoroWebsiteBlocker:
                                                          fill=icon_color, outline=icon_color)
 
     def _on_pause_play_icon_click(self, event=None):
-        if not self.timer_running:
-            return
-        self.timer_paused = not self.timer_paused
-        if self.timer_paused:
-            if self._timer_id:
-                self.root.after_cancel(self._timer_id)
-            print("Timer Paused")
+        if self.timer_running:
+            # Timer is running: Handle Pause/Resume
+            self.timer_paused = not self.timer_paused
+            if self.timer_paused:
+                if self._timer_id:
+                    self.root.after_cancel(self._timer_id)
+                print("Timer Paused")
+            else:
+                print("Timer Resumed")
+                self._tick_countdown() # Resume the countdown
         else:
-            print("Timer Resumed")
-            self._tick_countdown()
+            # Timer is NOT running: Handle Start Sequence
+            if self.custom_sequence:
+                # Ensure it's a fresh start or sequence truly ended.
+                # _stop_current_session should set self.current_sequence_index to -1.
+                if self.current_sequence_index == -1 or not self.timer_running:
+                    print("Play icon clicked: Starting defined sequence.")
+                    self.current_sequence_index = -1 # Reset to start from the beginning
+                    self._proceed_to_next_in_sequence()
+                # No 'else' needed here if _stop_current_session correctly resets the index
+            else:
+                messagebox.showerror("Sequence Error",
+                                    "No Pomodoro sequence is defined. Please define one in Edit > Edit Pomodoro Sequence.",
+                                    parent=self.root)
         self._update_ui_for_timer_state()
 
     def _start_session_common(self, state_name, break_type_name, duration_minutes):
@@ -1214,11 +1538,6 @@ class PomodoroWebsiteBlocker:
         self._update_ui_for_timer_state()
         self._tick_countdown()
         return True
-
-    def _start_focus_session(self): # This method might become obsolete or used for non-sequence focus
-        if not self._confirm_interrupt_sequence(): return # If starting focus manually, check sequence
-        self._start_session_common("Focus", "", self.focus_duration_minutes)
-
 
     def _start_automatic_break_session(self):
         print("Starting automatic short break.")
@@ -1465,30 +1784,6 @@ class PomodoroWebsiteBlocker:
                 print(f"Hosts file updated to BLOCK: {', '.join(domains_to_block_list)}")
         else:
              print(f"No changes needed to hosts file for BLOCKING: {', '.join(domains_to_block_list)}")
-
-    def _confirm_interrupt_sequence(self):
-        if self.timer_running and self.current_sequence_index >= 0:
-            if messagebox.askyesno("Interrupt Sequence?",
-                                   "A Pomodoro sequence is currently active. Starting a manual break will stop the current sequence. Continue?",
-                                   parent=self.root):
-                self._stop_current_session() 
-                # self.current_sequence_index = -1 # _stop_current_session now handles this
-                return True
-            else:
-                return False
-        return True
-
-    def _start_short_break_session(self):
-        if not self._confirm_interrupt_sequence(): return
-        self._start_session_common("Break", "Short", self.short_break_duration_minutes)
-
-    def _start_long_break_session(self):
-        if not self._confirm_interrupt_sequence(): return
-        self._start_session_common("Break", "Long", self.long_break_duration_minutes)
-
-    def _start_eating_break_session(self):
-        if not self._confirm_interrupt_sequence(): return
-        self._start_session_common("Break", "Eating", self.eating_break_duration_minutes)
 
     def _unblock_domains(self, domains_to_unblock_list):
         if not domains_to_unblock_list: return
